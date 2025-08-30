@@ -14,9 +14,19 @@ describe('AppController', () => {
     appController = app.get<AppController>(AppController);
   });
 
-  describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+  describe('twiml', () => {
+    it('should return TwiML response', () => {
+      const mockResponse = {
+        type: jest.fn(),
+        send: jest.fn(),
+      };
+
+      appController.getTwiml(mockResponse as any);
+
+      expect(mockResponse.type).toHaveBeenCalledWith('text/xml');
+      expect(mockResponse.send).toHaveBeenCalledWith(
+        expect.stringContaining('<Response>'),
+      );
     });
   });
 });
