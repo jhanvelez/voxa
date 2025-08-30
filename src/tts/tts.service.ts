@@ -1,47 +1,82 @@
+// tts.service.ts
 import { Injectable } from '@nestjs/common';
-import * as sdk from 'microsoft-cognitiveservices-speech-sdk';
+import axios from 'axios';
+import * as qs from 'querystring';
 
 @Injectable()
 export class TtsService {
-  private key = process.env.AZURE_SPEECH_KEY || '';
-  private region = process.env.AZURE_SPEECH_REGION || '';
-
-  private speechConfig() {
-    const sc = sdk.SpeechConfig.fromSubscription(this.key, this.region);
-    sc.speechSynthesisOutputFormat =
-      sdk.SpeechSynthesisOutputFormat.Raw16Khz16BitMonoPcm;
-    return sc;
-  }
+  private coquiServerUrl =
+    process.env.COQUI_SERVER_URL || 'http://localhost:5002';
+  private modelName =
+    process.env.COQUI_MODEL_NAME || 'tts_models/es/css10/vits';
 
   async synthesizeToBuffer(text: string): Promise<Buffer> {
-    const speechConfig = this.speechConfig();
-    // Create a push stream to receive audio data
-    const pushStream = sdk.AudioOutputStream.createPullStream();
-    const audioConfig = sdk.AudioConfig.fromStreamOutput(pushStream);
-    const synthesizer = new sdk.SpeechSynthesizer(speechConfig, audioConfig);
+    try {
+      // Limpiar y preparar el texto para TTS
+      const cleanText = this.cleanTextForTts(text);
 
-    return new Promise((resolve, reject) => {
-      // const chunks: Buffer[] = [];
+      // Usar endpoint /api/tts con form-urlencoded (que sabemos funciona)
+      const formData = qs.stringify({
+        text: cleanText,
+        model_name: this.modelName,
+        language_id: 'es',
+      });
 
-      // listen to pushStream 'write' events is not straightforward; instead use speakTextAsync callback result.audioData
-      synthesizer.speakTextAsync(
-        text,
-        (result) => {
-          if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
-            const audioData = result.audioData; // ArrayBuffer
-            const buf = Buffer.from(audioData);
-            synthesizer.close();
-            resolve(buf);
-          } else {
-            synthesizer.close();
-            reject(new Error('Synthesis failed: ' + result.errorDetails));
-          }
-        },
-        (err) => {
-          synthesizer.close();
-          reject(err);
+      const response = await axios.post(
+        `${this.coquiServerUrl}/api/tts`,
+        formData,
+        {
+          responseType: 'arraybuffer',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          timeout: 30000, // 30 segundos timeout
         },
       );
-    });
+
+      // Coqui TTS devuelve audio en formato WAV, necesitamos extraer el PCM
+      return this.extractPcmFromWav(Buffer.from(response.data));
+    } catch (error) {
+      console.error('Coqui TTS error:', error.message);
+      throw new Error(`TTS synthesis failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Extrae el audio PCM del WAV devuelto por Coqui TTS
+   * Coqui devuelve WAV, pero el VoiceGateway espera PCM raw
+   */
+  private extractPcmFromWav(wavBuffer: Buffer): Buffer {
+    try {
+      // Los archivos WAV tienen un header de 44 bytes
+      // Extraemos solo los datos de audio PCM
+      return wavBuffer.subarray(44);
+    } catch (error) {
+      console.warn(
+        'Error extracting PCM from WAV, returning raw buffer',
+        error,
+      );
+      return wavBuffer; // Fallback
+    }
+  }
+
+  private cleanTextForTts(text: string): string {
+    return text
+      .replace(/[^\w\sáéíóúñÁÉÍÓÚÑ.,!?;:()\-]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 500); // Limitar longitud para seguridad
+  }
+
+  async healthCheck(): Promise<boolean> {
+    try {
+      const response = await axios.get(`${this.coquiServerUrl}/api/health`, {
+        timeout: 5000,
+      });
+      return response.status === 200;
+    } catch (error) {
+      console.log('TTS Server health check failed:', error.message);
+      return false;
+    }
   }
 }

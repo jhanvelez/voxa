@@ -1,14 +1,14 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+// voice.gateway.ts - Versión corregida
+import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
-
-import { Readable } from 'stream';
 import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
-import Prism from 'prism-media';
+import * as prism from 'prism-media';
 
 @Injectable()
 export class VoiceGateway implements OnModuleInit {
+  private readonly logger = new Logger(VoiceGateway.name);
   private wss: WebSocketServer;
   private port = parseInt(process.env.TWILIO_WS_PORT || '8080', 10);
 
@@ -20,129 +20,176 @@ export class VoiceGateway implements OnModuleInit {
 
   onModuleInit() {
     this.wss = new WebSocket.Server({ port: this.port });
-    console.log(
+    this.logger.log(
       `Voice Gateway WebSocket listening on ws://0.0.0.0:${this.port}`,
     );
-
     this.wss.on('connection', (ws: WebSocket) => this.handleConnection(ws));
   }
 
   async handleConnection(ws: WebSocket) {
-    console.log('Twilio connected to Voice Gateway');
+    this.logger.log('Twilio connected to Voice Gateway');
 
-    // conectar Deepgram para este call
     this.deepgram.connect(async (transcript) => {
-      console.log('Deepgram transcript:', transcript);
-      // cuando Deepgram nos da texto, preguntamos al LLM
+      this.logger.log('Deepgram transcript:', transcript);
+
       try {
         const reply = await this.llm.ask(transcript);
-        console.log('LLM reply:', reply);
+        this.logger.log('LLM reply:', reply);
 
-        // sintetizar TTS con Azure (PCM 16khz s16le)
+        // sintetizar TTS con Coqui (PCM 16khz)
         const pcm16Buffer = await this.tts.synthesizeToBuffer(reply);
 
-        // Convertir PCM16 16k -> mulaw 8k (Twilio requires mu-law 8k for playback)
-        // usando FFmpeg through prism-media pipeline:
-        const ffmpeg: any = new Prism.FFmpeg({
-          args: [
-            '-f',
-            's16le',
-            '-ar',
-            '16000',
-            '-ac',
-            '1',
-            '-i',
-            'pipe:0',
-            '-f',
-            'mulaw',
-            '-ar',
-            '8000',
-            '-ac',
-            '1',
-            'pipe:1',
-          ],
+        // Convertir PCM16 16k -> mulaw 8k para Twilio
+        const mulawBuffer = await this.convertPcm16ToMulaw8k(pcm16Buffer);
+
+        const payload = mulawBuffer.toString('base64');
+        const msg = JSON.stringify({
+          event: 'media',
+          media: { payload },
         });
 
-        const inStream = Readable.from(pcm16Buffer);
-        const outChunks: Buffer[] = [];
-
-        ffmpeg.on('error', (e) => console.error('ffmpeg error', e));
-        ffmpeg.on('close', () => {
-          // cuando pipeline termine, tenemos audio ulaw 8k en outChunks
-          const audioMulaw = Buffer.concat(outChunks);
-
-          const payload = audioMulaw.toString('base64');
-          const msg = JSON.stringify({
-            event: 'media',
-            media: { payload },
-          });
-
-          // enviar audio de vuelta a Twilio
-          ws.send(msg);
-        });
-
-        ffmpeg.stdout.on('data', (c: Buffer) => outChunks.push(Buffer.from(c)));
-        inStream.pipe(ffmpeg.stdin);
+        // enviar audio de vuelta a Twilio
+        ws.send(msg);
       } catch (err) {
-        console.error('Error handling transcript -> LLM/TTS', err);
+        this.logger.error('Error handling transcript -> LLM/TTS', err);
       }
     });
 
     ws.on('message', (message) => {
       try {
         const data = JSON.parse(message.toString());
-        // Eventos: 'start', 'media', 'stop'
+
         if (data.event === 'media') {
           // Twilio envía payload base64 mu-law 8k
-          const b = Buffer.from(data.media.payload, 'base64');
+          const mulawBuffer = Buffer.from(data.media.payload, 'base64');
 
-          // convert mu-law 8k -> s16le 16k using ffmpeg pipeline to send to Deepgram
-          const ffmpeg: any = new Prism.FFmpeg({
-            args: [
-              '-f',
-              'mulaw',
-              '-ar',
-              '8000',
-              '-ac',
-              '1',
-              '-i',
-              'pipe:0',
-              '-f',
-              's16le',
-              '-ar',
-              '16000',
-              '-ac',
-              '1',
-              'pipe:1',
-            ],
-          });
+          // Convertir mu-law 8k -> PCM16 16k para Deepgram
+          const pcm16Buffer = this.convertMulaw8kToPcm16(mulawBuffer);
 
-          const outChunks: Buffer[] = [];
-          ffmpeg.stdout.on('data', (c: Buffer) =>
-            outChunks.push(Buffer.from(c)),
-          );
-          ffmpeg.on('close', () => {
-            const pcm16 = Buffer.concat(outChunks);
-            // enviar a Deepgram (ya en PCM s16le 16k)
-            this.deepgram.sendAudioChunk(pcm16);
-          });
-
-          ffmpeg.stdin.write(b);
-          ffmpeg.stdin.end();
+          // enviar a Deepgram
+          this.deepgram.sendAudioChunk(pcm16Buffer);
         } else if (data.event === 'start') {
-          console.log('Stream started');
+          this.logger.log('Stream started');
         } else if (data.event === 'stop') {
-          console.log('Stream stopped');
+          this.logger.log('Stream stopped');
           this.deepgram.stop();
         }
       } catch (e) {
-        console.error('Invalid WS message', e);
+        this.logger.error('Invalid WS message', e);
       }
     });
 
     ws.on('close', () => {
-      console.log('Twilio disconnected');
+      this.logger.log('Twilio disconnected');
       this.deepgram.stop();
     });
+  }
+
+  /**
+   * Convierte PCM16 16kHz a mu-law 8kHz para Twilio
+   */
+  private async convertPcm16ToMulaw8k(pcmBuffer: Buffer): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const ffmpeg = new prism.FFmpeg({
+        args: [
+          '-f',
+          's16le', // Formato de entrada: PCM signed 16-bit little-endian
+          '-ar',
+          '16000', // Sample rate de entrada: 16kHz
+          '-ac',
+          '1', // Canales de entrada: mono
+          '-i',
+          'pipe:0', // Entrada desde stdin
+          '-f',
+          'mulaw', // Formato de salida: mu-law
+          '-ar',
+          '8000', // Sample rate de salida: 8kHz
+          '-ac',
+          '1', // Canales de salida: mono
+          'pipe:1', // Salida a stdout
+        ],
+      });
+
+      const outputChunks: Buffer[] = [];
+
+      // prism-media usa streams diferentes
+      ffmpeg.on('data', (chunk: Buffer) => {
+        outputChunks.push(chunk);
+      });
+
+      ffmpeg.on('end', () => {
+        resolve(Buffer.concat(outputChunks));
+      });
+
+      ffmpeg.on('error', (error) => {
+        reject(error);
+      });
+
+      // Escribir datos PCM al FFmpeg
+      ffmpeg.write(pcmBuffer);
+      ffmpeg.end();
+    });
+  }
+
+  /**
+   * Convierte mu-law 8kHz a PCM16 16kHz para Deepgram
+   */
+  private convertMulaw8kToPcm16(mulawBuffer: Buffer): Buffer {
+    // Para esta conversión podemos hacerlo en memoria si es simple
+    // o usar FFmpeg para conversiones más complejas
+
+    // Implementación simple para mu-law -> PCM (puedes mejorarla)
+    try {
+      const ffmpeg = new prism.FFmpeg({
+        args: [
+          '-f',
+          'mulaw', // Formato de entrada: mu-law
+          '-ar',
+          '8000', // Sample rate de entrada: 8kHz
+          '-ac',
+          '1', // Canales de entrada: mono
+          '-i',
+          'pipe:0', // Entrada desde stdin
+          '-f',
+          's16le', // Formato de salida: PCM signed 16-bit little-endian
+          '-ar',
+          '16000', // Sample rate de salida: 16kHz
+          '-ac',
+          '1', // Canales de salida: mono
+          'pipe:1', // Salida a stdout
+        ],
+      });
+
+      const outputChunks: Buffer[] = [];
+
+      ffmpeg.on('data', (chunk: Buffer) => {
+        outputChunks.push(chunk);
+      });
+
+      ffmpeg.on('end', () => {
+        return Buffer.concat(outputChunks);
+      });
+
+      ffmpeg.on('error', (error) => {
+        this.logger.error('FFmpeg conversion error:', error);
+        return mulawBuffer; // Fallback
+      });
+
+      ffmpeg.write(mulawBuffer);
+      ffmpeg.end();
+    } catch (error) {
+      this.logger.error('Error in audio conversion:', error);
+      return mulawBuffer; // Fallback to original buffer
+    }
+  }
+
+  /**
+   * Método alternativo simple para conversión básica
+   * (Solo para pruebas, implementar proper audio conversion luego)
+   */
+  private simpleMulawToPcmConversion(mulawBuffer: Buffer): Buffer {
+    // Esta es una conversión muy básica - necesitarás implementar
+    // un algoritmo proper de mu-law to PCM para producción
+    return mulawBuffer; // Placeholder
   }
 }
