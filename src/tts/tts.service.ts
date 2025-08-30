@@ -10,6 +10,13 @@ export class TtsService {
   private modelName =
     process.env.COQUI_MODEL_NAME || 'tts_models/es/css10/vits';
 
+  /*
+    curl -X POST "http://localhost:5002/api/tts" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "text=Hola+SOY+JHAN+ROBERT&model_name=tts_models%2Fes%2Fcss10%2Fvits" \
+    --output prueba_form.wav
+  */
+
   async synthesizeToBuffer(text: string): Promise<Buffer> {
     try {
       // Limpiar y preparar el texto para TTS
