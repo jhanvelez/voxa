@@ -9,7 +9,7 @@ export class TwilioController {
   async makeCall(@Body() body: { to: string }) {
     console.log('Making call to:', body.to, 'with URL:', process.env.APP_URL);
     // Agregar parámetro para bypass de ngrok warning
-    const twimlUrl = `${process.env.APP_URL || 'http://localhost:3000'}/twiml?ngrok-skip-browser-warning=true`;
+    const twimlUrl = `${process.env.APP_URL}/voice`;
     return this.twilioService.makeCall(body.to, twimlUrl);
   }
 }
