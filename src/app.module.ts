@@ -7,10 +7,11 @@ import { DeepgramService } from './deepgram/deepgram.service';
 import { VoiceGateway } from './voice/voice.gateway';
 import { TwilioController } from './twilio/twilio.controller';
 import { TwilioService } from './twilio/twilio.service';
+import { VoiceController } from './voice/voice.controller';
 
 @Module({
   imports: [],
-  controllers: [AppController, TwilioController],
+  controllers: [AppController, TwilioController, VoiceController],
   providers: [
     AppService,
     VoiceGateway,
