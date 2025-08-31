@@ -5,6 +5,7 @@ import { Response } from 'express';
 export class VoiceController {
   @Post()
   handleCall(@Res() res: Response) {
+    console.log('Viene aqui');
     const twiml = `
       <Response>
         <Say voice="alice" language="es-ES">
