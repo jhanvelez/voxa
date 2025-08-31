@@ -11,7 +11,7 @@ export class TtsService {
     process.env.COQUI_MODEL_NAME || 'tts_models/es/css10/vits';
 
   /*
-    curl -X POST "http://3.16.21.105:5002/api/tts" \
+    curl -X POST "https://test.sustentiatec.com:5002/api/tts" \
     -H "Content-Type: application/x-www-form-urlencoded" \
     -d "text=Hola+SOY+JHAN+ROBERT&model_name=tts_models%2Fes%2Fcss10%2Fvits" \
     --output prueba_form.wav
