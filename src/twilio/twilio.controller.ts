@@ -7,9 +7,19 @@ export class TwilioController {
 
   @Post('call')
   async makeCall(@Body() body: { to: string }) {
-    console.log('Making call to:', body.to, 'with URL:', process.env.APP_URL);
+    console.log('Inicicia:', body.to, 'with URL:', process.env.APP_URL);
+
     // Agregar parámetro para bypass de ngrok warning
     const twimlUrl = `${process.env.APP_URL}/twiml`;
+
+    console.log({
+      to: body.to,
+      from: process.env.TWILIO_PHONE_NUMBER!,
+      twimlUrl,
+      statusCallback: `${process.env.APP_URL}/voice/status`,
+      statusCallbackMethod: 'POST',
+      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+    });
     return this.twilioService.makeCall(body.to, twimlUrl);
   }
 }
