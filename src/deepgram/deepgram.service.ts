@@ -7,13 +7,16 @@ export class DeepgramService {
   private apiKey = process.env.DEEPGRAM_API_KEY;
   public isConnected = false;
   private partialTranscript = '';
+  private lastFinalTranscript = '';
+  private transcriptCallback?: (text: string) => void;
 
   connect(onTranscript: (text: string) => void) {
     console.log('🔗 Conectando a Deepgram...');
+    this.transcriptCallback = onTranscript;
 
-    // Configuración CORRECTA para Twilio
-    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1`;
-    // Cambiado a channels=1 (Twilio envía mono)
+    // Mejor configuración para audio telefónico
+    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&endpointing=500&punctuate=true`;
+    // Added: interim_results, endpointing, punctuate
 
     this.ws = new WebSocket(url, {
       headers: {
@@ -24,6 +27,7 @@ export class DeepgramService {
     this.ws.on('open', () => {
       this.isConnected = true;
       this.partialTranscript = '';
+      this.lastFinalTranscript = '';
       console.log('✅ Deepgram conectado');
     });
 
@@ -31,18 +35,28 @@ export class DeepgramService {
       try {
         const data = JSON.parse(msg.toString());
 
-        // Solo procesar si es una transcripción
         if (data.type === 'Results') {
           const transcript = data?.channel?.alternatives?.[0]?.transcript;
           const isFinal = data?.is_final;
+          const speechFinal = data?.speech_final;
 
           if (transcript && transcript.trim().length > 0) {
+            console.log(
+              `🔊 Deepgram: ${transcript} (final: ${isFinal}, speech_final: ${speechFinal})`,
+            );
+
             if (isFinal) {
-              // Transcripción final - enviar completa
-              onTranscript(transcript);
+              // Transcripción final y completa
+              this.lastFinalTranscript = transcript;
+              if (this.transcriptCallback) {
+                this.transcriptCallback(transcript);
+              }
               this.partialTranscript = '';
+            } else if (speechFinal) {
+              // Speech final pero no necessarily is_final
+              this.partialTranscript = transcript;
             } else {
-              // Transcripción parcial - acumular
+              // Transcripción parcial - acumular pero no procesar aún
               this.partialTranscript = transcript;
             }
           }
@@ -65,7 +79,6 @@ export class DeepgramService {
 
   sendAudioChunk(chunk: Buffer) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn('⚠️ Deepgram no está conectado, no se puede enviar audio');
       return;
     }
 
@@ -78,6 +91,19 @@ export class DeepgramService {
 
   stop() {
     try {
+      // Si hay transcripción parcial pendiente, procesarla
+      if (
+        this.partialTranscript &&
+        this.partialTranscript !== this.lastFinalTranscript
+      ) {
+        console.log(
+          `📝 Procesando transcripción pendiente: ${this.partialTranscript}`,
+        );
+        if (this.transcriptCallback) {
+          this.transcriptCallback(this.partialTranscript);
+        }
+      }
+
       if (this.ws) {
         this.ws.close();
         this.isConnected = false;
@@ -85,6 +111,19 @@ export class DeepgramService {
       }
     } catch (e) {
       console.log('❌ Error cerrando conexión Deepgram:', e);
+    }
+  }
+
+  // Nuevo método para forzar el procesamiento de transcripción pendiente
+  flushTranscript() {
+    if (
+      this.partialTranscript &&
+      this.partialTranscript !== this.lastFinalTranscript
+    ) {
+      if (this.transcriptCallback) {
+        this.transcriptCallback(this.partialTranscript);
+      }
+      this.lastFinalTranscript = this.partialTranscript;
     }
   }
 }
