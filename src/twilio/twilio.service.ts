@@ -17,6 +17,7 @@ export class TwilioService {
       to,
       from: process.env.TWILIO_PHONE_NUMBER!,
       url, // URL donde Twilio buscará el TwiML
+      method: 'POST',
       statusCallback: `${process.env.APP_URL}/voice/status`,
       statusCallbackMethod: 'POST',
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],

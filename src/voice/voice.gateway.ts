@@ -29,6 +29,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Configurar escucha de mensajes entrantes
     client.on('message', async (message: Buffer) => {
+      this.logger.log('WS raw message: ' + message.toString().slice(0, 300));
       try {
         const data = JSON.parse(message.toString());
 
