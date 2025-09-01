@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import axios from 'axios';
 import * as qs from 'querystring';
 import * as wav from 'node-wav';
+import { encode } from 'mulaw-js';
 
 @Injectable()
 export class TtsService {
@@ -11,21 +12,10 @@ export class TtsService {
   private modelName =
     process.env.COQUI_MODEL_NAME || 'tts_models/es/css10/vits';
 
-  /*
-    curl -X POST "https://test.sustentiatec.com:5002/api/tts" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "text=Hola+SOY+JHAN+ROBERT&model_name=tts_models%2Fes%2Fcss10%2Fvits" \
-    --output prueba_form.wav
-  */
-
-  async synthesizeToBuffer(text: string): Promise<Buffer> {
+  async synthesizeToMuLaw8k(text: string): Promise<Buffer> {
     try {
-      // Limpiar y preparar el texto para TTS
-      const cleanText = this.cleanTextForTts(text);
-
-      // Usar endpoint /api/tts con form-urlencoded (que sabemos funciona)
       const formData = qs.stringify({
-        text: cleanText,
+        text,
         model_name: this.modelName,
         language_id: 'es',
       });
@@ -35,71 +25,69 @@ export class TtsService {
         formData,
         {
           responseType: 'arraybuffer',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          timeout: 30000, // 30 segundos timeout
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          timeout: 30000,
         },
       );
 
-      // Coqui TTS devuelve audio en formato WAV, necesitamos extraer el PCM
-      return this.extractPcmFromWav(Buffer.from(response.data));
-    } catch (error) {
-      console.error('Coqui TTS error:', error.message);
-      throw new Error(`TTS synthesis failed: ${error.message}`);
+      const wavBuffer = Buffer.from(response.data);
+      const { pcm16, sampleRate } = this.extractPcmAndRate(wavBuffer);
+
+      // Resample a 8000 Hz
+      const resampled = this.resamplePCM16(pcm16, sampleRate, 8000);
+
+      // Convertir a µLaw 8kHz
+      const mulawBuffer = Buffer.from(encode(resampled));
+
+      return mulawBuffer;
+    } catch (err) {
+      console.error('TTS synthesis error:', err.message);
+      throw err;
     }
   }
 
-  private cleanTextForTts(text: string): string {
-    return text
-      .replace(/[^\w\sáéíóúñÁÉÍÓÚÑ.,!?;:()\-]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .substring(0, 500); // Limitar longitud para seguridad
-  }
-
-  async healthCheck(): Promise<boolean> {
-    try {
-      const response = await axios.get(`${this.coquiServerUrl}/api/health`, {
-        timeout: 5000,
-      });
-      return response.status === 200;
-    } catch (error) {
-      console.log('TTS Server health check failed:', error.message);
-      return false;
-    }
-  }
-
-  /**
-   * Extrae el audio PCM del WAV devuelto por Coqui TTS
-   * Coqui devuelve WAV, pero el VoiceGateway espera PCM raw
-   */
-  private extractPcmFromWav(wavBuffer: Buffer): Buffer {
+  private extractPcmAndRate(wavBuffer: Buffer): {
+    pcm16: Int16Array;
+    sampleRate: number;
+  } {
     const result = wav.decode(wavBuffer);
-    // result.sampleRate -> frecuencia original (ej. 22050)
-    // result.channelData -> array de Float32Array por canal
-    // Mezclar canales a mono si hay más de uno
     let monoFloat: Float32Array;
+
     if (result.channelData.length > 1) {
       const length = result.channelData[0].length;
       monoFloat = new Float32Array(length);
       for (let i = 0; i < length; i++) {
         let sum = 0;
-        for (const channel of result.channelData) {
-          sum += channel[i];
-        }
+        for (const ch of result.channelData) sum += ch[i];
         monoFloat[i] = sum / result.channelData.length;
       }
     } else {
       monoFloat = result.channelData[0];
     }
-    // Convertir float32 [-1,1] a Int16
+
     const int16 = new Int16Array(monoFloat.length);
     for (let i = 0; i < monoFloat.length; i++) {
       const s = Math.max(-1, Math.min(1, monoFloat[i]));
       int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
-    // Si la frecuencia no es 16000 Hz, aquí deberías hacer resample (opcional)
-    return Buffer.from(int16.buffer);
+
+    return { pcm16: int16, sampleRate: result.sampleRate };
+  }
+
+  private resamplePCM16(
+    input: Int16Array,
+    inputRate: number,
+    targetRate: number,
+  ): Int16Array {
+    const ratio = inputRate / targetRate;
+    const outputLength = Math.floor(input.length / ratio);
+    const output = new Int16Array(outputLength);
+
+    for (let i = 0; i < outputLength; i++) {
+      const srcIndex = Math.floor(i * ratio);
+      output[i] = input[srcIndex];
+    }
+
+    return output;
   }
 }

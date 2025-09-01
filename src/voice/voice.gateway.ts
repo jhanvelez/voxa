@@ -51,28 +51,18 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               this.logger.log(`🤖 LLM reply: ${reply}`);
 
               // TTS (PCM16 16kHz)
-              const pcm16Buffer = await this.tts.synthesizeToBuffer(reply);
+              const mulawBuffer = await this.tts.synthesizeToMuLaw8k(reply);
 
-              if (!pcm16Buffer || pcm16Buffer.length === 0) {
-                this.logger.error('❌ TTS devolvió un buffer vacío');
-                return;
-              }
-
-              // Convert PCM16 → mulaw 8kHz
-              const samples = new Int16Array(pcm16Buffer.buffer);
-              const mulawSamples = encode(samples);
-              const mulawBuffer = Buffer.from(mulawSamples);
-
-              // Send back to Twilio
-              if (mulawBuffer?.length) {
-                const msg = JSON.stringify({
-                  event: 'media',
-                  streamSid,
-                  media: { payload: mulawBuffer.toString('base64') },
-                });
-                client.send(msg);
-              } else {
-                this.logger.warn('⚠️ mulawBuffer vacío, no se envía audio');
+              const chunkSize = 160;
+              for (let i = 0; i < mulawBuffer.length; i += chunkSize) {
+                const chunk = mulawBuffer.subarray(i, i + chunkSize);
+                client.send(
+                  JSON.stringify({
+                    event: 'media',
+                    streamSid,
+                    media: { payload: chunk.toString('base64') },
+                  }),
+                );
               }
             } catch (err) {
               this.logger.error('❌ Error in LLM/TTS pipeline', err);
