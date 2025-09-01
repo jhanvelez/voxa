@@ -1,13 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import * as WebSocket from 'ws';
+import VAD from 'webrtcvad';
 
 @Injectable()
 export class DeepgramService {
   private ws?: WebSocket;
   private apiKey = process.env.DEEPGRAM_API_KEY;
   public isConnected = false;
+  private bufferSize = 0;
+
+  private vad = new VAD(8000, 3);
   private partialTranscript = '';
   private lastFinalTranscript = '';
+  private audioBuffer: Buffer[] = [];
+  private readonly MAX_BUFFER_SIZE = 3200;
   private transcriptCallback?: (text: string) => void;
 
   connect(onTranscript: (text: string) => void) {
@@ -15,8 +21,7 @@ export class DeepgramService {
     this.transcriptCallback = onTranscript;
 
     // Mejor configuración para audio telefónico
-    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&endpointing=500&punctuate=true`;
-    // Added: interim_results, endpointing, punctuate
+    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&language=es&endpointing=300&utterance_end_ms=1000`;
 
     this.ws = new WebSocket(url, {
       headers: {
@@ -78,52 +83,50 @@ export class DeepgramService {
   }
 
   sendAudioChunk(chunk: Buffer) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    try {
-      this.ws.send(chunk);
-    } catch (e) {
-      console.error('❌ Error enviando audio a Deepgram:', e);
+    // Verificar si hay voz
+    const hasVoice = this.vad.process(chunk);
+
+    if (hasVoice) {
+      this.audioBuffer.push(chunk);
+      this.bufferSize += chunk.length;
+
+      if (this.bufferSize >= this.MAX_BUFFER_SIZE) this.flushBuffer();
+    } else {
+      this.flushBuffer(true);
+    }
+  }
+
+  private flushBuffer(force = false) {
+    if (this.audioBuffer.length === 0) return;
+
+    if (this.bufferSize >= this.MAX_BUFFER_SIZE || force) {
+      const combinedBuffer = Buffer.concat(this.audioBuffer);
+
+      try {
+        this.ws!.send(combinedBuffer);
+        console.log(`📤 Enviado buffer: ${combinedBuffer.length} bytes`);
+      } catch (e) {
+        console.error('❌ Error enviando audio a Deepgram:', e);
+      }
+
+      this.audioBuffer = [];
+      this.bufferSize = 0;
     }
   }
 
   stop() {
     try {
-      // Si hay transcripción parcial pendiente, procesarla
-      if (
-        this.partialTranscript &&
-        this.partialTranscript !== this.lastFinalTranscript
-      ) {
-        console.log(
-          `📝 Procesando transcripción pendiente: ${this.partialTranscript}`,
-        );
-        if (this.transcriptCallback) {
-          this.transcriptCallback(this.partialTranscript);
-        }
-      }
+      // Enviar cualquier audio pendiente
+      this.flushBuffer();
 
       if (this.ws) {
         this.ws.close();
         this.isConnected = false;
-        this.partialTranscript = '';
       }
     } catch (e) {
       console.log('❌ Error cerrando conexión Deepgram:', e);
-    }
-  }
-
-  // Nuevo método para forzar el procesamiento de transcripción pendiente
-  flushTranscript() {
-    if (
-      this.partialTranscript &&
-      this.partialTranscript !== this.lastFinalTranscript
-    ) {
-      if (this.transcriptCallback) {
-        this.transcriptCallback(this.partialTranscript);
-      }
-      this.lastFinalTranscript = this.partialTranscript;
     }
   }
 }
