@@ -23,7 +23,7 @@ export class VoiceController {
   @Post('status')
   handleStatus(@Body() body: any) {
     // Twilio te envía datos como CallSid, CallStatus, etc.
-    console.log('📞 Status callback recibido:', body);
+    console.log('📞 Status callback recibido:', body.CallStatus);
 
     // Aquí podrías guardar en DB, emitir evento, etc.
     return { received: true };
