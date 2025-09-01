@@ -5,6 +5,7 @@ import * as WebSocket from 'ws';
 export class DeepgramService {
   private ws?: WebSocket;
   private apiKey = process.env.DEEPGRAM_API_KEY;
+  public isConnected = false;
 
   connect(onTranscript: (text: string) => void) {
     console.log('Intento de conexion');
@@ -17,6 +18,7 @@ export class DeepgramService {
     });
 
     this.ws.on('open', () => {
+      this.isConnected = true;
       console.log('Deepgram WS connected');
     });
 
@@ -36,16 +38,16 @@ export class DeepgramService {
       }
     });
 
-    this.ws.on('close', () => console.log('Deepgram WS closed'));
+    this.ws.on('close', () => {
+      this.isConnected = false;
+      console.log('Deepgram WS closed');
+    });
     this.ws.on('error', (err) => console.error('Deepgram error', err));
   }
 
   sendAudioChunk(chunk: Buffer) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    // Deepgram espera raw binary audio for streaming
-    if (this.ws?.readyState) {
-      this.ws.send(chunk);
-    }
+    if (!this.ws || !this.isConnected) return;
+    this.ws.send(chunk);
   }
 
   stop() {
