@@ -9,7 +9,6 @@ import WebSocket, { Server } from 'ws';
 import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
-import { encode, decode } from 'mulaw-js';
 
 @WebSocketGateway({ path: '/voice-stream' })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
