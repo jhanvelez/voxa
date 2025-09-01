@@ -43,11 +43,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           streamSid = data.start.streamSid;
           this.logger.log(`Stream started (sid=${streamSid})`);
 
+          console.log(streamSid);
+
+          /*
           this.deepgram.connect(async (transcript) => {
             this.logger.log(`📝 Transcript: ${transcript}`);
 
             try {
-              /*
+              
               const reply = await this.llm.ask(transcript);
               this.logger.log(`🤖 LLM reply: ${reply}`);
 
@@ -81,11 +84,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               } else {
                 this.logger.warn('⚠️ mulawBuffer vacío, no se envía audio');
               }
-              */
             } catch (err) {
               this.logger.error('❌ Error in LLM/TTS pipeline', err);
             }
           });
+          */
         } else if (data.event === 'media') {
           if (!data.media?.payload) {
             this.logger.warn('⚠️ Media event sin payload válido');
