@@ -105,10 +105,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
-              // Solo enviar si el buffer tiene contenido real
               if (mulawBuffer.length > 10) {
-                // Ignorar chunks muy pequeños (silencio)
-                this.deepgram.sendAudioChunk(mulawBuffer);
+                if (this.deepgram.isConnected) {
+                  this.deepgram.sendAudioChunk(mulawBuffer);
+                }
               }
             } catch (err) {
               this.logger.error('❌ Error procesando audio', err);
