@@ -20,7 +20,7 @@ export class TwimlController {
     // Opcional: saludo
     vr.say(
       { voice: 'alice', language: 'es-ES' },
-      'Un momento, conectando con el asistente.',
+      'Hola, Robert, me comunico de La Ofrenda, quería brindarte información sobre tu cuota pendiente y aclarar si tienes preguntas o dudas.',
     );
 
     // Conectar la llamada al WebSocket (twilio media streams)
