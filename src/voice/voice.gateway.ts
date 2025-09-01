@@ -86,6 +86,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             this.logger.warn('⚠️ mulawBuffer vacío');
             return;
           }
+          /*
 
           let pcm16Samples: Int16Array;
           try {
@@ -108,10 +109,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           //this.logger.debug(
           // `PCM16 sample range: min=${minSample}, max=${maxSample}`,
           //);
-          const pcm16Buffer = Buffer.from(resampledSamples.buffer);
+          const pcm16Buffer = Buffer.from(mulawBuffer);
+          */
 
           if (this.deepgram.isConnected) {
-            this.deepgram.sendAudioChunk(pcm16Buffer);
+            this.deepgram.sendAudioChunk(mulawBuffer);
           } else {
             this.logger.warn('⚠️ Deepgram no conectado, audio no enviado');
           }
