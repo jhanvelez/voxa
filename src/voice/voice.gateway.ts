@@ -5,7 +5,8 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
-import { Server, WebSocket } from 'ws';
+import * as WebSocket from 'ws';
+import { Server } from 'ws';
 import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
@@ -85,14 +86,39 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             }
           });
         } else if (data.event === 'media') {
-          if (!data.media?.payload) return;
+          if (!data.media?.payload) {
+            this.logger.warn('⚠️ Media event sin payload válido');
+            return;
+          }
 
-          // μ-law 8kHz → PCM16 16kHz
-          const mulawBuffer = Buffer.from(data.media.payload, 'base64');
-          const mulawSamples = new Uint8Array(mulawBuffer);
-          const pcm16Samples = decode(mulawSamples);
+          let mulawBuffer: Buffer;
+          try {
+            mulawBuffer = Buffer.from(data.media.payload, 'base64');
+          } catch (err) {
+            this.logger.error('❌ Payload base64 inválido', err);
+            return;
+          }
+
+          if (!mulawBuffer || mulawBuffer.length === 0) {
+            this.logger.warn('⚠️ mulawBuffer vacío');
+            return;
+          }
+
+          let pcm16Samples: Int16Array;
+          try {
+            const mulawSamples = new Uint8Array(mulawBuffer);
+            pcm16Samples = decode(mulawSamples);
+          } catch (err) {
+            this.logger.error('❌ Error al decodificar µLaw → PCM16', err);
+            return;
+          }
+
+          if (!pcm16Samples || pcm16Samples.length === 0) {
+            this.logger.warn('⚠️ pcm16Samples vacío');
+            return;
+          }
+
           const pcm16Buffer = Buffer.from(pcm16Samples.buffer);
-
           this.deepgram.sendAudioChunk(pcm16Buffer);
         } else if (data.event === 'stop') {
           this.logger.log(`Stream stopped (sid=${streamSid})`);
