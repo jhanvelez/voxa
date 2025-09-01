@@ -9,9 +9,9 @@ import { Server, WebSocket } from 'ws';
 import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
-import * as prism from 'prism-media';
+import { encode, decode } from 'mulaw-js'; // 👈 reemplaza ffmpeg
 
-@WebSocketGateway({ path: '/voice-stream' }) // 🔑 Twilio conectará aquí
+@WebSocketGateway({ path: '/voice-stream' })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(VoiceGateway.name);
 
@@ -27,49 +27,65 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   handleConnection(client: WebSocket) {
     this.logger.log('🔌 Twilio connected to Voice Gateway');
 
-    // Configurar escucha de mensajes entrantes
+    let streamSid: string | null = null;
+
     client.on('message', async (message: Buffer) => {
+      let data: any;
       try {
-        const data = JSON.parse(message.toString());
+        data = JSON.parse(message.toString());
+      } catch {
+        this.logger.warn('⚠️ Invalid JSON message');
+        return;
+      }
 
-        if (data.event === 'media') {
-          // 🎙️ Audio entrante en mu-law 8kHz → convertir a PCM16 16kHz
-          const mulawBuffer = Buffer.from(data.media.payload, 'base64');
-          const pcm16Buffer = await this.convertMulaw8kToPcm16(mulawBuffer);
+      try {
+        if (data.event === 'start') {
+          streamSid = data.start.streamSid;
+          this.logger.log(`Stream started (sid=${streamSid})`);
 
-          this.deepgram.sendAudioChunk(pcm16Buffer);
-        } else if (data.event === 'start') {
-          this.logger.log('Stream started');
           this.deepgram.connect(async (transcript) => {
-            this.logger.log('Deepgram transcript:', transcript);
+            this.logger.log(`📝 Transcript: ${transcript}`);
 
             try {
               const reply = await this.llm.ask(transcript);
-              this.logger.log('LLM reply:', reply);
+              this.logger.log(`🤖 LLM reply: ${reply}`);
 
-              // sintetizar TTS con Coqui (PCM16 16kHz)
+              // TTS (PCM16 16kHz)
               const pcm16Buffer = await this.tts.synthesizeToBuffer(reply);
 
-              // Convertir PCM16 → mu-law 8kHz
-              const mulawBuffer = await this.convertPcm16ToMulaw8k(pcm16Buffer);
+              // Convert PCM16 → mulaw 8kHz
+              const samples = new Int16Array(pcm16Buffer.buffer);
+              const mulawSamples = encode(samples);
+              const mulawBuffer = Buffer.from(mulawSamples);
 
-              const payload = mulawBuffer.toString('base64');
+              // Send back to Twilio
               const msg = JSON.stringify({
                 event: 'media',
-                media: { payload },
+                streamSid,
+                media: { payload: mulawBuffer.toString('base64') },
               });
-
               client.send(msg);
             } catch (err) {
-              this.logger.error('Error manejando transcript -> LLM/TTS', err);
+              this.logger.error('❌ Error in LLM/TTS pipeline', err);
             }
           });
+        } else if (data.event === 'media') {
+          if (!data.media?.payload) return;
+
+          // μ-law 8kHz → PCM16 16kHz
+          const mulawBuffer = Buffer.from(data.media.payload, 'base64');
+          const mulawSamples = new Uint8Array(mulawBuffer);
+          const pcm16Samples = decode(mulawSamples);
+          const pcm16Buffer = Buffer.from(pcm16Samples.buffer);
+
+          this.deepgram.sendAudioChunk(pcm16Buffer);
         } else if (data.event === 'stop') {
-          this.logger.log('Stream stopped');
+          this.logger.log(`Stream stopped (sid=${streamSid})`);
           this.deepgram.stop();
+          client.close();
         }
-      } catch (e) {
-        this.logger.error('Invalid WS message', e);
+      } catch (err) {
+        this.logger.error('❌ Error handling WS message', err);
       }
     });
 
@@ -80,57 +96,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   handleDisconnect(client: WebSocket) {
-    this.logger.log('Cliente desconectado:', client);
-  }
-
-  // --- Conversión PCM16 <-> mu-law ---
-  private async convertPcm16ToMulaw8k(pcmBuffer: Buffer): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const ffmpeg = new prism.FFmpeg({
-        args: [
-          '-f', 's16le',
-          '-ar', '16000',
-          '-ac', '1',
-          '-i', 'pipe:0',
-          '-f', 'mulaw',
-          '-ar', '8000',
-          '-ac', '1',
-          'pipe:1',
-        ],
-      });
-
-      const outputChunks: Buffer[] = [];
-      ffmpeg.on('data', (chunk: Buffer) => outputChunks.push(chunk));
-      ffmpeg.on('end', () => resolve(Buffer.concat(outputChunks)));
-      ffmpeg.on('error', (err) => reject(err));
-
-      ffmpeg.write(pcmBuffer);
-      ffmpeg.end();
-    });
-  }
-
-  private async convertMulaw8kToPcm16(mulawBuffer: Buffer): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const ffmpeg = new prism.FFmpeg({
-        args: [
-          '-f', 'mulaw',
-          '-ar', '8000',
-          '-ac', '1',
-          '-i', 'pipe:0',
-          '-f', 's16le',
-          '-ar', '16000',
-          '-ac', '1',
-          'pipe:1',
-        ],
-      });
-
-      const outputChunks: Buffer[] = [];
-      ffmpeg.on('data', (chunk: Buffer) => outputChunks.push(chunk));
-      ffmpeg.on('end', () => resolve(Buffer.concat(outputChunks)));
-      ffmpeg.on('error', (err) => reject(err));
-
-      ffmpeg.write(mulawBuffer);
-      ffmpeg.end();
-    });
+    this.logger.log('Cliente desconectado');
+    this.deepgram.stop();
+    client.terminate();
   }
 }
