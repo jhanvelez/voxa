@@ -66,7 +66,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             return;
           }
 
-          console.log(pcm16Samples);
+          if (!pcm16Samples || pcm16Samples.length === 0) {
+            this.logger.warn('⚠️ pcm16Samples vacío');
+            return;
+          }
+
+          const pcm16Buffer = Buffer.from(pcm16Samples.buffer);
+
+          console.log(pcm16Buffer);
         }
       } catch (err) {
         this.logger.error('❌ Error pdata', err);
@@ -122,33 +129,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             }
           });
         } else if (data.event === 'media') {
-          if (!data.media?.payload) {
-            this.logger.warn('⚠️ Media event sin payload válido');
-            return;
-          }
-
-          let mulawBuffer: Buffer;
-          try {
-            mulawBuffer = Buffer.from(data.media.payload, 'base64');
-          } catch (err) {
-            this.logger.error('❌ Payload base64 inválido', err);
-            return;
-          }
-
-          if (!mulawBuffer || mulawBuffer.length === 0) {
-            this.logger.warn('⚠️ mulawBuffer vacío');
-            return;
-          }
-
-          let pcm16Samples: Int16Array;
-          try {
-            const mulawSamples = new Uint8Array(mulawBuffer);
-            pcm16Samples = decode(mulawSamples);
-          } catch (err) {
-            this.logger.error('❌ Error al decodificar µLaw → PCM16', err);
-            return;
-          }
-
+ 
           if (!pcm16Samples || pcm16Samples.length === 0) {
             this.logger.warn('⚠️ pcm16Samples vacío');
             return;
