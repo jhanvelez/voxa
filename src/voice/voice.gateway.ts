@@ -102,7 +102,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                   this.logger.log(
                     '🔇 Silencio detectado, forzando procesamiento',
                   );
-                  this.deepgram.flushTranscript();
                   silenceCounter = 0;
                 }
               } else {
