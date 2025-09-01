@@ -22,22 +22,6 @@ async function bootstrap() {
     const voiceGateway = app.get(VoiceGateway);
     voiceGateway.handleConnection(ws);
 
-    ws.on('message', (msg) => {
-      const data = JSON.parse(msg.toString());
-      console.log('Mensaje WS:', data);
-
-      // Ejemplo: echo test
-      if (data.event === 'media') {
-        ws.send(
-          JSON.stringify({
-            event: 'media',
-            streamSid: data.streamSid,
-            media: { payload: data.media.payload },
-          }),
-        );
-      }
-    });
-
     ws.on('close', () => {
       console.log('Twilio WS cerrado');
     });
