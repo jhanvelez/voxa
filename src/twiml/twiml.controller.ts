@@ -1,31 +1,35 @@
 // src/twiml/twiml.controller.ts
-import { Controller, Get, Res, Logger } from '@nestjs/common';
-import { Response } from 'express';
-import { twiml } from 'twilio';
+import { Controller, Get, Post, Req, Res, Logger } from '@nestjs/common';
+import { Request, Response } from 'express';
+import * as twilio from 'twilio';
 
 @Controller()
 export class TwimlController {
   private readonly logger = new Logger(TwimlController.name);
 
+  // Atiende GET y POST (Twilio puede usar POST por default)
   @Get('twiml')
-  getTwiml(@Res() res: Response) {
-    const vr = new twiml.VoiceResponse();
+  @Post('twiml')
+  getTwiml(@Req() req: Request, @Res() res: Response) {
+    this.logger.log(
+      `Twiml requested. Method=${req.method} Headers=${JSON.stringify(req.headers)}`,
+    );
+
+    const vr = new twilio.twiml.VoiceResponse();
+
+    // Opcional: saludo
     vr.say(
       { voice: 'alice', language: 'es-ES' },
       'Un momento, conectando con el asistente.',
     );
 
+    // Conectar la llamada al WebSocket (twilio media streams)
     vr.connect().stream({
       url: 'wss://test.sustentiatec.com/voice-stream',
-      // track: 'inbound', // opcional; por defecto Twilio envía el audio entrante (caller)
-      // name: 'agente-voz', // opcional, útil para logs
     });
 
-    const xml = vr.toString();
-    this.logger.log(`Enviando TwiML: ${xml}`);
-
+    // Enviar XML EXACTO, sin espacios ni encabezados duplicados
     res.set('Content-Type', 'application/xml');
-    // Forzar encabezado XML al inicio (sin espacios en blanco)
-    res.send(`<?xml version="1.0" encoding="UTF-8"?>${xml}`);
+    res.send(vr.toString()); // twilio.twiml.VoiceResponse ya incluye la cabecera XML
   }
 }
