@@ -15,7 +15,7 @@ export class DeepgramService {
     this.transcriptCallback = onTranscript;
 
     // Mejor configuración para audio telefónico
-    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&endpointing=500&punctuate=true`;
+    const url = `wss://api.deepgram.com/v1/listen?model=whisper-large&language=es&encoding=mulaw&sample_rate=8000&channels=1`;
     // Added: interim_results, endpointing, punctuate
 
     this.ws = new WebSocket(url, {

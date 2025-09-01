@@ -93,6 +93,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               return;
             }
 
+            this.logger.debug(
+              `🎵 Audio chunk: ${data.media.payload.length} chars, ~${Math.round(data.media.payload.length * 0.75)} bytes`,
+            );
+
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
               // Detectar silencio (payload muy pequeño)
