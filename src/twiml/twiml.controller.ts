@@ -25,7 +25,7 @@ export class TwimlController {
 
     // Conectar la llamada al WebSocket (twilio media streams)
     vr.connect().stream({
-      url: 'wss://test.sustentiatec.com/ws/',
+      url: 'wss://test.sustentiatec.com:3001/twilio-stream',
     });
 
     // Enviar XML EXACTO, sin espacios ni encabezados duplicados
