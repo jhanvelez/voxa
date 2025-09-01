@@ -27,6 +27,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log('🔌 Twilio conectado');
     let streamSid: string | null = null;
     let isProcessing = false;
+    let silenceCounter = 0;
+    const SILENCE_THRESHOLD = 5; // 5 chunks silenciosos antes de procesar
 
     client.on('message', async (message: Buffer) => {
       let data: any;
@@ -43,6 +45,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             this.deepgram.stop();
             streamSid = data.start.streamSid;
             this.logger.log(`🎙️ Stream iniciado (sid=${streamSid})`);
+            silenceCounter = 0;
 
             this.deepgram.connect(async (transcript) => {
               if (isProcessing) {
@@ -60,11 +63,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 // Sintetizar audio
                 const mulawBuffer = await this.tts.synthesizeToMuLaw8k(reply);
 
-                // Enviar audio en chunks con pausas
-                const chunkSize = 320; // Chunks más grandes
+                // Enviar audio en chunks
+                const chunkSize = 160;
                 for (let i = 0; i < mulawBuffer.length; i += chunkSize) {
                   const chunk = mulawBuffer.subarray(i, i + chunkSize);
-
+                  await new Promise((resolve) => setTimeout(resolve, 10)); // Pequeña pausa
                   client.send(
                     JSON.stringify({
                       event: 'media',
@@ -75,21 +78,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                       },
                     }),
                   );
-
-                  // Pequeña pausa para no saturar
-                  if (i % (chunkSize * 10) === 0) {
-                    await new Promise((resolve) => setTimeout(resolve, 10));
-                  }
                 }
-
-                // Señal de fin de media
-                client.send(
-                  JSON.stringify({
-                    event: 'mark',
-                    streamSid,
-                    mark: { name: 'endOfAudio' },
-                  }),
-                );
               } catch (err) {
                 this.logger.error('❌ Error en pipeline LLM/TTS', err);
               } finally {
@@ -100,15 +89,32 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
           case 'media':
             if (!data.media?.payload) {
+              this.logger.warn('⚠️ Evento media sin payload válido');
               return;
             }
 
+            this.logger.debug(
+              `🎵 Audio chunk: ${data.media.payload.length} chars, ~${Math.round(data.media.payload.length * 0.75)} bytes`,
+            );
+
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
-              if (mulawBuffer.length > 10) {
-                if (this.deepgram.isConnected) {
-                  this.deepgram.sendAudioChunk(mulawBuffer);
+              // Detectar silencio (payload muy pequeño)
+              if (mulawBuffer.length < 20) {
+                silenceCounter++;
+                if (silenceCounter >= SILENCE_THRESHOLD) {
+                  this.logger.log(
+                    '🔇 Silencio detectado, forzando procesamiento',
+                  );
+                  //this.deepgram.flushTranscript();
+                  silenceCounter = 0;
                 }
+              } else {
+                silenceCounter = 0;
+              }
+
+              if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
+                this.deepgram.sendAudioChunk(mulawBuffer);
               }
             } catch (err) {
               this.logger.error('❌ Error procesando audio', err);
