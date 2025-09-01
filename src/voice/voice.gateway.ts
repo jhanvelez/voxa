@@ -27,13 +27,15 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log('🔌 Twilio conectado');
     let streamSid: string | null = null;
     let isProcessing = false;
+    let silenceCounter = 0;
+    const SILENCE_THRESHOLD = 5; // 5 chunks silenciosos antes de procesar
 
     client.on('message', async (message: Buffer) => {
       let data: any;
       try {
         data = JSON.parse(message.toString());
       } catch {
-        this.logger.warn('⚠️ Invalid JSON message');
+        this.logger.warn('⚠️ Mensaje JSON inválido');
         return;
       }
 
@@ -43,6 +45,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             this.deepgram.stop();
             streamSid = data.start.streamSid;
             this.logger.log(`🎙️ Stream iniciado (sid=${streamSid})`);
+            silenceCounter = 0;
 
             this.deepgram.connect(async (transcript) => {
               if (isProcessing) {
@@ -51,7 +54,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               }
 
               isProcessing = true;
-              this.logger.log(`📝 Transcripción: ${transcript}`);
+              this.logger.log(`📝 Transcripción completa: ${transcript}`);
 
               try {
                 const reply = await this.llm.ask(transcript);
@@ -64,6 +67,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 const chunkSize = 160;
                 for (let i = 0; i < mulawBuffer.length; i += chunkSize) {
                   const chunk = mulawBuffer.subarray(i, i + chunkSize);
+                  await new Promise((resolve) => setTimeout(resolve, 10)); // Pequeña pausa
                   client.send(
                     JSON.stringify({
                       event: 'media',
@@ -75,15 +79,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                     }),
                   );
                 }
-
-                // Señal de fin de media
-                client.send(
-                  JSON.stringify({
-                    event: 'mark',
-                    streamSid,
-                    mark: { name: 'endOfAudio' },
-                  }),
-                );
               } catch (err) {
                 this.logger.error('❌ Error en pipeline LLM/TTS', err);
               } finally {
@@ -100,6 +95,19 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
+              // Detectar silencio (payload muy pequeño)
+              if (mulawBuffer.length < 20) {
+                silenceCounter++;
+                if (silenceCounter >= SILENCE_THRESHOLD) {
+                  this.logger.log(
+                    '🔇 Silencio detectado, forzando procesamiento',
+                  );
+                  this.deepgram.flushTranscript();
+                  silenceCounter = 0;
+                }
+              } else {
+                silenceCounter = 0;
+              }
 
               if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
                 this.deepgram.sendAudioChunk(mulawBuffer);
@@ -118,76 +126,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       } catch (err) {
         this.logger.error('❌ Error general', err);
       }
-
-      /*
-      try {
-        if (data.event === 'start') {
-          this.deepgram.stop();
-          streamSid = data.start.streamSid;
-          this.logger.log(`Stream started (sid=${streamSid})`);
-
-          this.deepgram.connect(async (transcript) => {
-            this.logger.log(`📝 Transcript: ${transcript}`);
-
-            try {
-              const reply = await this.llm.ask(transcript);
-              this.logger.log(`🤖 LLM reply: ${reply}`);
-
-              // TTS (PCM16 16kHz)
-              const mulawBuffer = await this.tts.synthesizeToMuLaw8k(reply);
-
-              const chunkSize = 160;
-              for (let i = 0; i < mulawBuffer.length; i += chunkSize) {
-                const chunk = mulawBuffer.subarray(i, i + chunkSize);
-                client.send(
-                  JSON.stringify({
-                    event: 'media',
-                    streamSid,
-                    media: { payload: chunk.toString('base64') },
-                  }),
-                );
-              }
-            } catch (err) {
-              this.logger.error('❌ Error in LLM/TTS pipeline', err);
-            }
-          });
-        } else if (data.event === 'media') {
-          if (!data.media?.payload) {
-            this.logger.warn('⚠️ Media event sin payload válido');
-            return;
-          }
-
-          let mulawBuffer: Buffer;
-          try {
-            mulawBuffer = Buffer.from(data.media.payload, 'base64');
-          } catch (err) {
-            this.logger.error('❌ Payload base64 inválido', err);
-            return;
-          }
-
-          if (!mulawBuffer || mulawBuffer.length === 0) {
-            this.logger.warn('⚠️ mulawBuffer vacío');
-            return;
-          }
-
-          if (this.deepgram.isConnected) {
-            this.deepgram.sendAudioChunk(mulawBuffer);
-          } else {
-            this.logger.warn('⚠️ Deepgram no conectado, audio no enviado');
-          }
-        } else if (data.event === 'stop') {
-          this.logger.log(`Stream stopped (sid=${streamSid})`);
-          this.deepgram.stop();
-          client.close();
-        }
-      } catch (err) {
-        this.logger.error('❌ Error data', err);
-      }
-      */
     });
 
     client.on('close', () => {
-      this.logger.log('❌ Twilio disconnected');
+      this.logger.log('❌ Twilio desconectado');
       this.deepgram.stop();
     });
   }
