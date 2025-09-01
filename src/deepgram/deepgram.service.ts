@@ -14,7 +14,7 @@ export class DeepgramService {
   connect(onTranscript: (text: string) => void) {
     console.log('🔗 Conectando a Deepgram...');
 
-    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&endpointing=300&utterance_end_ms=1000`;
+    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&language=es&endpointing=300&utterance_end_ms=1000`;
 
     this.ws = new WebSocket(url, {
       headers: {
