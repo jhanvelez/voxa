@@ -8,7 +8,8 @@ export class TwimlController {
   getTwiml(@Res() res: Response) {
     const voiceResponse = new twiml.VoiceResponse();
     voiceResponse.say('Hola, esta es tu propia respuesta personalizada.');
-    res.type('text/xml');
+    //res.type('text/xml');
+    res.set('Content-Type', 'application/xml');
     res.send(voiceResponse.toString());
   }
 }
