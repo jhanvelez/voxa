@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as WebSocket from 'ws';
+import VAD from 'webrtcvad';
 
 @Injectable()
 export class DeepgramService {
@@ -8,8 +9,9 @@ export class DeepgramService {
   public isConnected = false;
   private audioBuffer: Buffer[] = [];
   private bufferSize = 0;
-  private readonly MAX_BUFFER_SIZE = 3200; // ~200ms de audio a 8kHz
+  private readonly MAX_BUFFER_SIZE = 3200;
   private processingTimeout?: NodeJS.Timeout;
+  private vad = new VAD(8000, 3);
 
   connect(onTranscript: (text: string) => void) {
     console.log('🔗 Conectando a Deepgram...');
@@ -65,47 +67,37 @@ export class DeepgramService {
   }
 
   sendAudioChunk(chunk: Buffer) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    // Acumular audio en buffer
-    this.audioBuffer.push(chunk);
-    this.bufferSize += chunk.length;
+    // Verificar si hay voz
+    const hasVoice = this.vad.process(chunk);
 
-    // Limpiar timeout anterior
-    if (this.processingTimeout) {
-      clearTimeout(this.processingTimeout);
-    }
+    if (hasVoice) {
+      this.audioBuffer.push(chunk);
+      this.bufferSize += chunk.length;
 
-    // Enviar cuando el buffer esté lleno o después de un timeout
-    if (this.bufferSize >= this.MAX_BUFFER_SIZE) {
-      this.flushBuffer();
+      if (this.bufferSize >= this.MAX_BUFFER_SIZE) this.flushBuffer();
     } else {
-      this.processingTimeout = setTimeout(() => {
-        this.flushBuffer();
-      }, 100); // Enviar cada 100ms como máximo
+      this.flushBuffer(true);
     }
   }
 
-  private flushBuffer() {
+  private flushBuffer(force = false) {
     if (this.audioBuffer.length === 0) return;
 
-    // Combinar todos los chunks del buffer
-    const combinedBuffer = Buffer.concat(this.audioBuffer);
+    if (this.bufferSize >= this.MAX_BUFFER_SIZE || force) {
+      const combinedBuffer = Buffer.concat(this.audioBuffer);
 
-    try {
-      this.ws!.send(combinedBuffer);
-      console.log(
-        `📤 Enviado buffer: ${combinedBuffer.length} bytes (${this.audioBuffer.length} chunks)`,
-      );
-    } catch (e) {
-      console.error('❌ Error enviando audio a Deepgram:', e);
+      try {
+        this.ws!.send(combinedBuffer);
+        console.log(`📤 Enviado buffer: ${combinedBuffer.length} bytes`);
+      } catch (e) {
+        console.error('❌ Error enviando audio a Deepgram:', e);
+      }
+
+      this.audioBuffer = [];
+      this.bufferSize = 0;
     }
-
-    // Reset buffer
-    this.audioBuffer = [];
-    this.bufferSize = 0;
   }
 
   stop() {
