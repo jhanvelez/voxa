@@ -44,9 +44,9 @@ export class DeepgramService {
   sendAudioChunk(chunk: Buffer) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     // Deepgram espera raw binary audio for streaming
-    console.log('Mensaje recibido');
-    console.log('Estado del WS:', this.ws?.readyState);
-    this.ws.send(chunk);
+    if (this.ws?.readyState) {
+      this.ws.send(chunk);
+    }
   }
 
   stop() {

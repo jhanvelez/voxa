@@ -116,8 +116,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             return;
           }
 
-          const pcm16Buffer = Buffer.from(pcm16Samples);
-          //const resampledBuffer = resamplePCM16To16k(pcm16Buffer);
+          const resampledSamples = this.resamplePCM16To16k(pcm16Samples);
+          const pcm16Buffer = Buffer.from(resampledSamples.buffer);
           this.deepgram.sendAudioChunk(pcm16Buffer);
         }
       } catch (err) {
@@ -196,5 +196,16 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log('Cliente desconectado');
     this.deepgram.stop();
     client.terminate();
+  }
+
+  resamplePCM16To16k(pcm8k: Int16Array): Int16Array {
+    const factor = 2; // 8k → 16k
+    const resampled = new Int16Array(pcm8k.length * factor);
+
+    for (let i = 0; i < resampled.length; i++) {
+      resampled[i] = pcm8k[Math.floor(i / factor)];
+    }
+
+    return resampled;
   }
 }
