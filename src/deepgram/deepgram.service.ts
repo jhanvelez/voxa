@@ -10,7 +10,7 @@ export class DeepgramService {
   connect(onTranscript: (text: string) => void) {
     console.log('Intento de conexion');
 
-    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=11`;
+    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1`;
     this.ws = new WebSocket(url, {
       headers: {
         Authorization: `Token ${this.apiKey}`,
