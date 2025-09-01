@@ -7,6 +7,8 @@ export class DeepgramService {
   private apiKey = process.env.DEEPGRAM_API_KEY;
 
   connect(onTranscript: (text: string) => void) {
+    console.log('Intento de conexion');
+
     const url = `wss://api.deepgram.com/v1/listen?model=general&encoding=linear16&sample_rate=16000&channels=1`;
     this.ws = new WebSocket(url, {
       headers: {

@@ -5,12 +5,11 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
-import * as WebSocket from 'ws';
-import { Server } from 'ws';
+import WebSocket, { Server } from 'ws';
 import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
-import { encode, decode } from 'mulaw-js'; // 👈 reemplaza ffmpeg
+import { encode, decode } from 'mulaw-js';
 
 @WebSocketGateway({ path: '/voice-stream' })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -48,6 +47,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             this.logger.log(`📝 Transcript: ${transcript}`);
 
             try {
+              /*
               const reply = await this.llm.ask(transcript);
               this.logger.log(`🤖 LLM reply: ${reply}`);
 
@@ -81,6 +81,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               } else {
                 this.logger.warn('⚠️ mulawBuffer vacío, no se envía audio');
               }
+              */
             } catch (err) {
               this.logger.error('❌ Error in LLM/TTS pipeline', err);
             }
