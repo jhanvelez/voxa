@@ -52,7 +52,21 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             return;
           }
 
-          console.log(mulawBuffer);
+          if (!mulawBuffer || mulawBuffer.length === 0) {
+            this.logger.warn('⚠️ mulawBuffer vacío');
+            return;
+          }
+
+          let pcm16Samples: Int16Array;
+          try {
+            const mulawSamples = new Uint8Array(mulawBuffer);
+            pcm16Samples = decode(mulawSamples);
+          } catch (err) {
+            this.logger.error('❌ Error al decodificar µLaw → PCM16', err);
+            return;
+          }
+
+          console.log(pcm16Samples);
         }
       } catch (err) {
         this.logger.error('❌ Error pdata', err);
