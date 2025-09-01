@@ -71,11 +71,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             return;
           }
 
-          const pcm16Buffer = Buffer.from(
-            pcm16Samples.buffer,
-            pcm16Samples.byteOffset,
-            pcm16Samples.byteLength,
-          );
+          const pcm16Buffer = Buffer.from(pcm16Samples);
 
           console.log(pcm16Buffer);
         }
