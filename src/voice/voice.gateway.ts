@@ -71,7 +71,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             return;
           }
 
-          const pcm16Buffer = Buffer.from(pcm16Samples.buffer);
+          const pcm16Buffer = Buffer.from(
+            pcm16Samples.buffer,
+            pcm16Samples.byteOffset,
+            pcm16Samples.byteLength,
+          );
 
           console.log(pcm16Buffer);
         }
@@ -129,7 +133,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             }
           });
         } else if (data.event === 'media') {
- 
+
           if (!pcm16Samples || pcm16Samples.length === 0) {
             this.logger.warn('⚠️ pcm16Samples vacío');
             return;
