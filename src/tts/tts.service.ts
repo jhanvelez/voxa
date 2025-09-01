@@ -2,6 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
 import * as qs from 'querystring';
+import * as wav from 'node-wav';
 
 @Injectable()
 export class TtsService {
@@ -49,24 +50,6 @@ export class TtsService {
     }
   }
 
-  /**
-   * Extrae el audio PCM del WAV devuelto por Coqui TTS
-   * Coqui devuelve WAV, pero el VoiceGateway espera PCM raw
-   */
-  private extractPcmFromWav(wavBuffer: Buffer): Buffer {
-    try {
-      // Los archivos WAV tienen un header de 44 bytes
-      // Extraemos solo los datos de audio PCM
-      return wavBuffer.subarray(44);
-    } catch (error) {
-      console.warn(
-        'Error extracting PCM from WAV, returning raw buffer',
-        error,
-      );
-      return wavBuffer; // Fallback
-    }
-  }
-
   private cleanTextForTts(text: string): string {
     return text
       .replace(/[^\w\sáéíóúñÁÉÍÓÚÑ.,!?;:()\-]/g, '')
@@ -85,5 +68,38 @@ export class TtsService {
       console.log('TTS Server health check failed:', error.message);
       return false;
     }
+  }
+
+  /**
+   * Extrae el audio PCM del WAV devuelto por Coqui TTS
+   * Coqui devuelve WAV, pero el VoiceGateway espera PCM raw
+   */
+  private extractPcmFromWav(wavBuffer: Buffer): Buffer {
+    const result = wav.decode(wavBuffer);
+    // result.sampleRate -> frecuencia original (ej. 22050)
+    // result.channelData -> array de Float32Array por canal
+    // Mezclar canales a mono si hay más de uno
+    let monoFloat: Float32Array;
+    if (result.channelData.length > 1) {
+      const length = result.channelData[0].length;
+      monoFloat = new Float32Array(length);
+      for (let i = 0; i < length; i++) {
+        let sum = 0;
+        for (const channel of result.channelData) {
+          sum += channel[i];
+        }
+        monoFloat[i] = sum / result.channelData.length;
+      }
+    } else {
+      monoFloat = result.channelData[0];
+    }
+    // Convertir float32 [-1,1] a Int16
+    const int16 = new Int16Array(monoFloat.length);
+    for (let i = 0; i < monoFloat.length; i++) {
+      const s = Math.max(-1, Math.min(1, monoFloat[i]));
+      int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    // Si la frecuencia no es 16000 Hz, aquí deberías hacer resample (opcional)
+    return Buffer.from(int16.buffer);
   }
 }

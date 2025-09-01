@@ -53,23 +53,15 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               // TTS (PCM16 16kHz)
               const pcm16Buffer = await this.tts.synthesizeToBuffer(reply);
 
-              console.log(pcm16Buffer);
-
               if (!pcm16Buffer || pcm16Buffer.length === 0) {
                 this.logger.error('❌ TTS devolvió un buffer vacío');
                 return;
               }
 
               // Convert PCM16 → mulaw 8kHz
-              let mulawBuffer: Buffer;
-              try {
-                const samples = new Int16Array(pcm16Buffer.buffer);
-                const mulawSamples = encode(samples);
-                mulawBuffer = Buffer.from(mulawSamples);
-              } catch (err) {
-                this.logger.error('❌ Error convirtiendo PCM16 → µLaw', err);
-                return;
-              }
+              const samples = new Int16Array(pcm16Buffer.buffer);
+              const mulawSamples = encode(samples);
+              const mulawBuffer = Buffer.from(mulawSamples);
 
               // Send back to Twilio
               if (mulawBuffer?.length) {
