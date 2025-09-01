@@ -52,6 +52,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               // TTS (PCM16 16kHz)
               const pcm16Buffer = await this.tts.synthesizeToBuffer(reply);
 
+              console.log(pcm16Buffer);
+
               if (!pcm16Buffer || pcm16Buffer.length === 0) {
                 this.logger.error('❌ TTS devolvió un buffer vacío');
                 return;
@@ -119,6 +121,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           const resampledSamples = this.resamplePCM16To16k(pcm16Samples);
           const pcm16Buffer = Buffer.from(resampledSamples.buffer);
           this.deepgram.sendAudioChunk(pcm16Buffer);
+        } else if (data.event === 'stop') {
+          this.logger.log(`Stream stopped (sid=${streamSid})`);
+          this.deepgram.stop();
+          client.close();
         }
       } catch (err) {
         this.logger.error('❌ Error data', err);
