@@ -37,8 +37,26 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.logger.warn('⚠️ Invalid JSON message');
         return;
       }
+      try {
+        if (data.event === 'media') {
+          if (!data.media?.payload) {
+            this.logger.warn('⚠️ Media event sin payload válido');
+            return;
+          }
 
-      console.log(data);
+          let mulawBuffer: Buffer;
+          try {
+            mulawBuffer = Buffer.from(data.media.payload, 'base64');
+          } catch (err) {
+            this.logger.error('❌ Payload base64 inválido', err);
+            return;
+          }
+
+          console.log(mulawBuffer);
+        }
+      } catch (err) {
+        this.logger.error('❌ Error pdata', err);
+      }
 
       try {
         /*
