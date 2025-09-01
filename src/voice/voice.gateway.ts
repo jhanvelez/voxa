@@ -10,7 +10,6 @@ import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
 import { encode, decode } from 'mulaw-js';
-import * as prism from 'prism-media';
 
 @WebSocketGateway({ path: '/voice-stream' })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -129,11 +128,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           );
           const pcm16Buffer = Buffer.from(resampledSamples.buffer);
 
-          const mulawBuffer2 = Buffer.from(data.media.payload, 'base64');
-          const pcm16Buffer2 = await this.convertMulaw8kToPcm16(mulawBuffer2);
-
           if (this.deepgram.isConnected) {
-            this.deepgram.sendAudioChunk(pcm16Buffer2);
+            this.deepgram.sendAudioChunk(pcm16Buffer);
           } else {
             this.logger.warn('⚠️ Deepgram no conectado, audio no enviado');
           }
@@ -144,67 +140,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       } catch (err) {
         this.logger.error('❌ Error data', err);
-      }
-
-      try {
-        /*
-        if (data.event === 'start') {
-          streamSid = data.start.streamSid;
-          this.logger.log(`Stream started (sid=${streamSid})`);
-
-          console.log(streamSid);
-
-          this.deepgram.connect(async (transcript) => {
-            this.logger.log(`📝 Transcript: ${transcript}`);
-
-            try {
-              const reply = await this.llm.ask(transcript);
-              this.logger.log(`🤖 LLM reply: ${reply}`);
-
-              // TTS (PCM16 16kHz)
-              const pcm16Buffer = await this.tts.synthesizeToBuffer(reply);
-
-              if (!pcm16Buffer || pcm16Buffer.length === 0) {
-                this.logger.error('❌ TTS devolvió un buffer vacío');
-                return;
-              }
-
-              // Convert PCM16 → mulaw 8kHz
-              let mulawBuffer: Buffer;
-              try {
-                const samples = new Int16Array(pcm16Buffer.buffer);
-                const mulawSamples = encode(samples);
-                mulawBuffer = Buffer.from(mulawSamples);
-              } catch (err) {
-                this.logger.error('❌ Error convirtiendo PCM16 → µLaw', err);
-                return;
-              }
-
-              // Send back to Twilio
-              if (mulawBuffer?.length) {
-                const msg = JSON.stringify({
-                  event: 'media',
-                  streamSid,
-                  media: { payload: mulawBuffer.toString('base64') },
-                });
-                client.send(msg);
-              } else {
-                this.logger.warn('⚠️ mulawBuffer vacío, no se envía audio');
-              }
-            } catch (err) {
-              this.logger.error('❌ Error in LLM/TTS pipeline', err);
-            }
-          });
-        } else if (data.event === 'media') {
-
-        } else if (data.event === 'stop') {
-          this.logger.log(`Stream stopped (sid=${streamSid})`);
-          this.deepgram.stop();
-          client.close();
-        }
-        */
-      } catch (err) {
-        this.logger.error('❌ Error handling WS message', err);
       }
     });
 
@@ -229,55 +164,5 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     return resampled;
-  }
-
-    private async convertPcm16ToMulaw8k(pcmBuffer: Buffer): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const ffmpeg = new prism.FFmpeg({
-        args: [
-          '-f', 's16le',
-          '-ar', '16000',
-          '-ac', '1',
-          '-i', 'pipe:0',
-          '-f', 'mulaw',
-          '-ar', '8000',
-          '-ac', '1',
-          'pipe:1',
-        ],
-      });
-
-      const outputChunks: Buffer[] = [];
-      ffmpeg.on('data', (chunk: Buffer) => outputChunks.push(chunk));
-      ffmpeg.on('end', () => resolve(Buffer.concat(outputChunks)));
-      ffmpeg.on('error', (err) => reject(err));
-
-      ffmpeg.write(pcmBuffer);
-      ffmpeg.end();
-    });
-  }
-
-  private async convertMulaw8kToPcm16(mulawBuffer: Buffer): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const ffmpeg = new prism.FFmpeg({
-        args: [
-          '-f', 'mulaw',
-          '-ar', '8000',
-          '-ac', '1',
-          '-i', 'pipe:0',
-          '-f', 's16le',
-          '-ar', '16000',
-          '-ac', '1',
-          'pipe:1',
-        ],
-      });
-
-      const outputChunks: Buffer[] = [];
-      ffmpeg.on('data', (chunk: Buffer) => outputChunks.push(chunk));
-      ffmpeg.on('end', () => resolve(Buffer.concat(outputChunks)));
-      ffmpeg.on('error', (err) => reject(err));
-
-      ffmpeg.write(mulawBuffer);
-      ffmpeg.end();
-    });
   }
 }
