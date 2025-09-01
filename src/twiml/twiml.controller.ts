@@ -18,10 +18,8 @@ export class TwimlController {
     const vr = new twilio.twiml.VoiceResponse();
 
     // Opcional: saludo
-    vr.say(
-      { voice: 'alice', language: 'es-ES' },
-      'Hola, Robert, me comunico de La Ofrenda, quería brindarte información sobre tu cuota pendiente y aclarar si tienes preguntas o dudas.',
-    );
+    // vr.say({ voice: 'alice', language: 'es-ES' }, 'Hola, Robert');
+    // me comunico de La Ofrenda, quería brindarte información sobre tu cuota pendiente y aclarar si tienes preguntas o dudas.
 
     // Conectar la llamada al WebSocket (twilio media streams)
     vr.connect().stream({

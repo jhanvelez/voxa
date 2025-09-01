@@ -117,6 +117,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           }
 
           const pcm16Buffer = Buffer.from(pcm16Samples);
+          //const resampledBuffer = resamplePCM16To16k(pcm16Buffer);
           this.deepgram.sendAudioChunk(pcm16Buffer);
         }
       } catch (err) {
