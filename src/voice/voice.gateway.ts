@@ -113,6 +113,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           */
 
           if (this.deepgram.isConnected) {
+            console.log(mulawBuffer);
             this.deepgram.sendAudioChunk(mulawBuffer);
           } else {
             this.logger.warn('⚠️ Deepgram no conectado, audio no enviado');
