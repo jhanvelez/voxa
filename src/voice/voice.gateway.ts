@@ -38,7 +38,52 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
       try {
-        if (data.event === 'media') {
+        if (data.event === 'start') {
+          streamSid = data.start.streamSid;
+          this.logger.log(`Stream started (sid=${streamSid})`);
+
+          this.deepgram.connect(async (transcript) => {
+            this.logger.log(`📝 Transcript: ${transcript}`);
+
+            try {
+              const reply = await this.llm.ask(transcript);
+              this.logger.log(`🤖 LLM reply: ${reply}`);
+
+              // TTS (PCM16 16kHz)
+              const pcm16Buffer = await this.tts.synthesizeToBuffer(reply);
+
+              if (!pcm16Buffer || pcm16Buffer.length === 0) {
+                this.logger.error('❌ TTS devolvió un buffer vacío');
+                return;
+              }
+
+              // Convert PCM16 → mulaw 8kHz
+              let mulawBuffer: Buffer;
+              try {
+                const samples = new Int16Array(pcm16Buffer.buffer);
+                const mulawSamples = encode(samples);
+                mulawBuffer = Buffer.from(mulawSamples);
+              } catch (err) {
+                this.logger.error('❌ Error convirtiendo PCM16 → µLaw', err);
+                return;
+              }
+
+              // Send back to Twilio
+              if (mulawBuffer?.length) {
+                const msg = JSON.stringify({
+                  event: 'media',
+                  streamSid,
+                  media: { payload: mulawBuffer.toString('base64') },
+                });
+                client.send(msg);
+              } else {
+                this.logger.warn('⚠️ mulawBuffer vacío, no se envía audio');
+              }
+            } catch (err) {
+              this.logger.error('❌ Error in LLM/TTS pipeline', err);
+            }
+          });
+        } else if (data.event === 'media') {
           if (!data.media?.payload) {
             this.logger.warn('⚠️ Media event sin payload válido');
             return;
@@ -72,8 +117,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           }
 
           const pcm16Buffer = Buffer.from(pcm16Samples);
-
-          console.log(pcm16Buffer);
+          this.deepgram.sendAudioChunk(pcm16Buffer);
         }
       } catch (err) {
         this.logger.error('❌ Error pdata', err);
@@ -130,13 +174,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           });
         } else if (data.event === 'media') {
 
-          if (!pcm16Samples || pcm16Samples.length === 0) {
-            this.logger.warn('⚠️ pcm16Samples vacío');
-            return;
-          }
-
-          const pcm16Buffer = Buffer.from(pcm16Samples.buffer);
-          this.deepgram.sendAudioChunk(pcm16Buffer);
         } else if (data.event === 'stop') {
           this.logger.log(`Stream stopped (sid=${streamSid})`);
           this.deepgram.stop();
