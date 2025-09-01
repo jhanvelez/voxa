@@ -121,11 +121,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
           const resampledSamples = this.resamplePCM16To16k(pcm16Samples);
 
-          const minSample = Math.min(...resampledSamples);
-          const maxSample = Math.max(...resampledSamples);
-          this.logger.debug(
-            `PCM16 sample range: min=${minSample}, max=${maxSample}`,
-          );
+          // const minSample = Math.min(...resampledSamples);
+          // const maxSample = Math.max(...resampledSamples);
+          //this.logger.debug(
+          // `PCM16 sample range: min=${minSample}, max=${maxSample}`,
+          //);
           const pcm16Buffer = Buffer.from(resampledSamples.buffer);
 
           if (this.deepgram.isConnected) {
