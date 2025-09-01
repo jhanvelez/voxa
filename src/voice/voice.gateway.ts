@@ -28,7 +28,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log('🔌 Twilio connected to Voice Gateway');
 
     let streamSid: string | null = null;
-    this.deepgram.connect((text) => console.log('Transcript:', text));
 
     client.on('message', async (message: Buffer) => {
       let data: any;
@@ -40,8 +39,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
       try {
         if (data.event === 'start') {
-          console.log('HACE EL START');
-
           streamSid = data.start.streamSid;
           this.logger.log(`Stream started (sid=${streamSid})`);
 

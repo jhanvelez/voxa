@@ -21,6 +21,8 @@ export class DeepgramService {
     });
 
     this.ws.on('message', (msg) => {
+      console.log(msg.toString());
+
       try {
         const data = JSON.parse(msg.toString());
         const transcript = data?.channel?.alternatives?.[0]?.transcript;
