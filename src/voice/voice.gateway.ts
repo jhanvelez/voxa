@@ -78,16 +78,16 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             mulawBuffer = Buffer.from(data.media.payload, 'base64');
           } catch (err) {
             this.logger.error('❌ Payload base64 inválido', err);
-            return;
+            //return;
           }
 
           if (!mulawBuffer || mulawBuffer.length === 0) {
             this.logger.warn('⚠️ mulawBuffer vacío');
-            return;
+            //return;
           }
 
           if (this.deepgram.isConnected) {
-            this.deepgram.sendAudioChunk(mulawBuffer);
+            this.deepgram.sendAudioChunk(data.media.payload);
           } else {
             this.logger.warn('⚠️ Deepgram no conectado, audio no enviado');
           }
