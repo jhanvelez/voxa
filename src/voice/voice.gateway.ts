@@ -129,9 +129,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
                 // Envía el audio µ-law directamente sin convertir
                 this.deepgram.sendAudioChunk(mulawBuffer);
+                /*
                 this.logger.log(
                   `📤 Enviado a Deepgram ${mulawBuffer.length} bytes (µ-law)`,
                 );
+                */
               }
 
               /*
