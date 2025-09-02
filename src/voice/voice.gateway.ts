@@ -9,6 +9,7 @@ import WebSocket, { Server } from 'ws';
 import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
+import { WavFileWriter } from './class';
 
 @WebSocketGateway({ path: '/voice-stream' })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -47,6 +48,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     let streamSid: string | null = null;
     let isProcessing = false;
 
+    let wavWriter: WavFileWriter | null = null;
+
     // const SILENCE_THRESHOLD = 200;
     // const SILENCE_FRAMES = 5;
     // let mulawBufferCounter: Buffer | undefined = undefined;
@@ -67,6 +70,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             this.deepgram.stop();
             streamSid = data.start.streamSid;
             this.logger.log(`🎙️ Stream iniciado (sid=${streamSid})`);
+
+              wavWriter = new WavFileWriter(8000, 1);
+              wavWriter.start(`${streamSid}.wav`);
 
             this.deepgram.connect(async (transcript) => {
               if (isProcessing) {
@@ -131,6 +137,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               this.logger.log(
                 `📥 Audio recibido: ${mulawBuffer.length} bytes µ-law → ${pcmBuffer.length} bytes PCM`,
               );
+
+              wavWriter = new WavFileWriter(8000, 1);
+              wavWriter.start(`${streamSid}.wav`);
 
               if (pcmBuffer.length > 0 && this.deepgram.isConnected) {
                 this.deepgram.sendAudioChunk(pcmBuffer);
