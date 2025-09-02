@@ -16,7 +16,7 @@ export class DeepgramService {
   connect(onTranscript: (text: string) => void) {
     console.log('🔗 Conectando a Deepgram...');
 
-    const url = `wss://api.deepgram.com/v1/listen?encoding=mulaw&sample_rate=8000&channels=1&language=es-419`;
+    const url = `wss://api.deepgram.com/v1/listen?encoding=mulaw&sample_rate=8000&channels=1&language=es-419&endpointing=1500`;
 
     this.ws = new WebSocket(url, {
       headers: {
@@ -92,7 +92,7 @@ export class DeepgramService {
 
       try {
         this.ws!.send(combinedBuffer);
-        console.log(`📤 Enviado buffer: ${combinedBuffer.length} bytes`);
+        // console.log(`📤 Enviado buffer: ${combinedBuffer.length} bytes`);
       } catch (e) {
         console.error('❌ Error enviando audio a Deepgram:', e);
       }

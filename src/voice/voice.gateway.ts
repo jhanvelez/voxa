@@ -23,34 +23,15 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
-  private readonly MULAW_DECODE_TABLE: Int16Array = (() => {
-    const table = new Int16Array(256);
-    const BIAS = 0x84; // 132
-    for (let i = 0; i < 256; i++) {
-      let mu = ~i & 0xff;
-      let sign = mu & 0x80;
-      let exponent = (mu >> 4) & 0x07;
-      let mantissa = mu & 0x0f;
-      let sample = ((mantissa << 4) + BIAS) << (exponent + 3);
-      if (sign !== 0) sample = -sample;
-      table[i] = sample;
-    }
-    return table;
-  })();
-
-  private muLawDecode(muLawByte: number): number {
-    return this.MULAW_DECODE_TABLE[muLawByte & 0xff];
-  }
+  private paymentDateAgreed: boolean = false;
+  private agreedDate: string = '';
 
   handleConnection(client: WebSocket) {
     this.logger.log('🔌 Twilio conectado');
     let streamSid: string | null = null;
     let isProcessing = false;
-
-    // const SILENCE_THRESHOLD = 200;
-    // const SILENCE_FRAMES = 5;
-    // let mulawBufferCounter: Buffer | undefined = undefined;
-    // let silenceCounter = 0;
+    this.paymentDateAgreed = false; // Resetear estado
+    this.agreedDate = '';
 
     client.on('message', async (message: Buffer) => {
       let data: any;
@@ -76,6 +57,13 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
               isProcessing = true;
               this.logger.log(`📝 Transcripción completa: ${transcript}`);
+
+              if (this.paymentDateAgreed) {
+                this.logger.log('✅ Fecha ya acordada, terminando llamada...');
+                await this.endCall(client, streamSid, this.agreedDate);
+                isProcessing = false;
+                return;
+              }
 
               try {
                 const reply = await this.llm.ask(transcript);
@@ -197,5 +185,48 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     return resampled;
+  }
+
+  private async endCall(
+    client: WebSocket,
+    streamSid: string,
+    agreedDate: string,
+  ) {
+    this.logger.log(`📞 Terminando llamada. Fecha acordada: ${agreedDate}`);
+
+    try {
+      // Enviar mensaje de despedida
+      const goodbyeMessage = `Su pago ha sido programado para el ${agreedDate}. Gracias por su compromiso.`;
+      const goodbyeAudio = await this.tts.synthesizeToMuLaw8k(goodbyeMessage);
+
+      const chunkSize = 160;
+      for (let i = 0; i < goodbyeAudio.length; i += chunkSize) {
+        const chunk = goodbyeAudio.subarray(i, i + chunkSize);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        client.send(
+          JSON.stringify({
+            event: 'media',
+            streamSid,
+            media: {
+              payload: chunk.toString('base64'),
+              track: 'inbound',
+            },
+          }),
+        );
+      }
+
+      // Esperar a que se envíe el audio y luego terminar
+      setTimeout(() => {
+        client.send(
+          JSON.stringify({
+            event: 'stop',
+            streamSid,
+          }),
+        );
+        this.logger.log('🛑 Llamada finalizada');
+      }, 1000);
+    } catch (err) {
+      this.logger.error('❌ Error terminando llamada', err);
+    }
   }
 }
