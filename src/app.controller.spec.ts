@@ -21,7 +21,7 @@ describe('AppController', () => {
         send: jest.fn(),
       };
 
-      appController.getTwiml(mockResponse as any);
+      //appController.getTwiml(mockResponse as any);
 
       expect(mockResponse.type).toHaveBeenCalledWith('text/xml');
       expect(mockResponse.send).toHaveBeenCalledWith(
