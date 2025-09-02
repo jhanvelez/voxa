@@ -15,9 +15,8 @@ export class DeepgramService {
 
   connect(onTranscript: (text: string) => void) {
     console.log('🔗 Conectando a Deepgram...');
-    console.log(`Token ${this.apiKey}`);
 
-    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&language=es&endpointing=1500&utterance_end_ms=1000`;
+    const url = `wss://api.deepgram.com/v1/listen?encoding=mulaw&sample_rate=8000&channels=1`;
 
     this.ws = new WebSocket(url, {
       headers: {
@@ -63,19 +62,17 @@ export class DeepgramService {
 
     this.ws.on('error', (err) => {
       console.error('❌ Error de Deepgram:', err);
-      console.error(
-        err.responseHeaders?.['dg-error'],
-        err.responseHeaders?.['dg-request-id'],
-      );
       this.isConnected = false;
     });
   }
 
+  // Desactiva temporalmente el VAD para testing
   sendAudioChunk(chunk: Buffer) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    // Verificar si hay voz
-    const hasVoice = this.vad.process(chunk);
+    // Comenta el VAD temporalmente
+    // const hasVoice = this.vad.process(chunk);
+    const hasVoice = true; // Forzar envío de todo el audio
 
     if (hasVoice) {
       this.audioBuffer.push(chunk);
