@@ -117,12 +117,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
 
+              /*
               const first10 = Array.from(mulawBuffer.slice(0, 10)).join(', ');
               this.logger.debug(`Primeros 10 bytes µ-law: ${first10}`);
 
               this.logger.log(
                 `📥 Audio recibido: ${mulawBuffer.length} bytes µ-law`,
               );
+              */
 
               if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
                 // Envía el audio µ-law directamente sin convertir
