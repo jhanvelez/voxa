@@ -35,9 +35,13 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log('🔌 Twilio conectado');
 
     // Extraer parámetros de la URL del WebSocket
-    const url = new URL(req.url, 'ws://localhost');
-    const customerName = url.searchParams.get('customerName');
-    const debtAmount = url.searchParams.get('debtAmount');
+
+    const customerName = req.query.customerName as string;
+    const debtAmount = req.query.debtAmount as string;
+
+    //const url = new URL(req.url, 'ws://localhost');
+    //const customerName = url.searchParams.get('customerName');
+    // const debtAmount = url.searchParams.get('debtAmount');
 
     this.logger.log(
       `📋 Parámetros del cliente: nombre=${customerName}, deuda=${debtAmount}`,
