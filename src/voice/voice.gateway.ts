@@ -9,7 +9,6 @@ import WebSocket, { Server } from 'ws';
 import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
-import { VoiceMediaService } from './voice-media.service';
 
 @WebSocketGateway({ path: '/voice-stream' })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -19,7 +18,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private deepgram: DeepgramService,
     private llm: LlmService,
     private tts: TtsService,
-    private voiceMedia: VoiceMediaService,
   ) {}
 
   @WebSocketServer()
