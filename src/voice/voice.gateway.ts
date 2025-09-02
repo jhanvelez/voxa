@@ -28,7 +28,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     let streamSid: string | null = null;
     let isProcessing = false;
     let silenceCounter = 0;
-    const SILENCE_THRESHOLD = 5; // 5 chunks silenciosos antes de procesar
+    const SILENCE_THRESHOLD = 20;
 
     client.on('message', async (message: Buffer) => {
       let data: any;
@@ -95,7 +95,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
-              // Detectar silencio (payload muy pequeño)
               if (mulawBuffer.length < 20) {
                 silenceCounter++;
                 if (silenceCounter >= SILENCE_THRESHOLD) {
@@ -105,7 +104,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                   silenceCounter = 0;
                 }
               } else {
-                silenceCounter = 0;
+                this.logger.log(
+                  '🔇 Se debe en este punto de cargar todo y envaiar a DeepGram.',
+                );
+                silenceCounter++;
               }
 
               if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
