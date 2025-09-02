@@ -28,7 +28,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log('🔌 Twilio conectado');
     let streamSid: string | null = null;
     let isProcessing = false;
-    let silenceCounter = 0;
+    let mulawBufferCounter = undefined;
     const SILENCE_THRESHOLD = 200;
 
     client.on('message', async (message: Buffer) => {
@@ -46,7 +46,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             this.deepgram.stop();
             streamSid = data.start.streamSid;
             this.logger.log(`🎙️ Stream iniciado (sid=${streamSid})`);
-            silenceCounter = 0;
 
             this.deepgram.connect(async (transcript) => {
               if (isProcessing) {
@@ -105,20 +104,33 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               }
               const rms = Math.sqrt(sumSquares / pcm16.length);
 
+              /*
               this.logger.log(
                 `🔇 Volumen del paquete del audio capturado: ${rms}.`,
               );
+              */
 
               if (rms < SILENCE_THRESHOLD) {
-                silenceCounter++;
-                if (silenceCounter >= 10) {
+                // Aqui se entra cuando se encuentre un silencio:
+                setTimeout(() => {
+                  this.logger.log(
+                    `Tamano del paquete real: ${mulawBufferCounter.length}`,
+                  );
+
+                  if (mulawBufferCounter.length > 200) {
+                    // Enviarlo
+                  }
+                  mulawBufferCounter = undefined;
                   this.logger.log(
                     '🔇 Silencio detectado, forzando procesamiento',
                   );
-                  silenceCounter = 0;
+                }, 100);
+
+                if (mulawBufferCounter == undefined) {
+                  // Se ha enviado al deepgram y espera respuesta
                 }
               } else {
-                silenceCounter = 0;
+                mulawBufferCounter += mulawBuffer;
                 this.logger.log(`🎤 Voz detectada (RMS=${rms.toFixed(2)})`);
               }
 
