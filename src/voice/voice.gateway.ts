@@ -99,11 +99,24 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
 
-              // 🔥 Convertir de µ-law → PCM16 (Int16Array)
-              const pcm16 = decode(mulawBuffer);
+              const mulawUint8 = new Uint8Array(mulawBuffer);
 
-              // Deepgram necesita un Buffer con PCM16 en little-endian
+              // 2. Decodificar cada byte µ-law → PCM16
+              const pcm16 = new Int16Array(mulawUint8.length);
+              for (let i = 0; i < mulawUint8.length; i++) {
+                pcm16[i] = decode(mulawUint8[i]); // decode espera un byte, no un buffer entero
+              }
+
+              // 3. Pasar a Buffer para Deepgram
               const pcmBuffer = Buffer.from(pcm16.buffer);
+
+              this.logger.debug(
+                `Payload base64 length: ${data.media.payload.length}`,
+              );
+
+              this.logger.debug(
+                `Primeros 10 samples PCM16: ${pcm16.slice(0, 10).join(', ')}`,
+              );
 
               this.logger.log(
                 `📥 Audio recibido: ${mulawBuffer.length} bytes µ-law → ${pcmBuffer.length} bytes PCM`,
