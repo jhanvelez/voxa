@@ -95,6 +95,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
+
+              this.logger.log(
+                `🔇 Tamano del paquete: ${mulawBuffer.length} - ruido ${mulawBuffer}.`,
+              );
+
               if (mulawBuffer.length < 20) {
                 silenceCounter++;
                 if (silenceCounter >= SILENCE_THRESHOLD) {
@@ -104,9 +109,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                   silenceCounter = 0;
                 }
               } else {
-                this.logger.log(
-                  '🔇 Se debe en este punto de cargar todo y envaiar a DeepGram.',
-                );
                 silenceCounter++;
               }
 
