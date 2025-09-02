@@ -9,6 +9,7 @@ import WebSocket, { Server } from 'ws';
 import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
+import { VoiceMediaService } from './voice-media.service';
 
 @WebSocketGateway({ path: '/voice-stream' })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -18,10 +19,30 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private deepgram: DeepgramService,
     private llm: LlmService,
     private tts: TtsService,
+    private voiceMedia: VoiceMediaService,
   ) {}
 
   @WebSocketServer()
   server: Server;
+
+  private readonly MULAW_DECODE_TABLE: Int16Array = (() => {
+    const table = new Int16Array(256);
+    const BIAS = 0x84; // 132
+    for (let i = 0; i < 256; i++) {
+      let mu = ~i & 0xff;
+      let sign = mu & 0x80;
+      let exponent = (mu >> 4) & 0x07;
+      let mantissa = mu & 0x0f;
+      let sample = ((mantissa << 4) + BIAS) << (exponent + 3);
+      if (sign !== 0) sample = -sample;
+      table[i] = sample;
+    }
+    return table;
+  })();
+
+  private muLawDecode(muLawByte: number): number {
+    return this.MULAW_DECODE_TABLE[muLawByte & 0xff];
+  }
 
   handleConnection(client: WebSocket) {
     this.logger.log('🔌 Twilio conectado');
@@ -97,21 +118,13 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
+              const pcm16 = new Int16Array(mulawBuffer.length);
 
-              const mulawUint8 = new Uint8Array(mulawBuffer);
-
-              const pcm16 = new Int16Array(mulawUint8.length);
-              // 2. Decodificar cada byte µ-law → PCM16
-              for (let i = 0; i < mulawUint8.length; i++) {
-                pcm16[i] = this.muLawDecode(mulawUint8[i]);
+              for (let i = 0; i < mulawBuffer.length; i++) {
+                pcm16[i] = this.muLawDecode(mulawBuffer[i]);
               }
 
-              // 3. Pasar a Buffer para Deepgram
               const pcmBuffer = Buffer.from(pcm16.buffer);
-
-              this.logger.debug(
-                `Payload base64 length: ${data.media.payload.length}`,
-              );
 
               this.logger.debug(
                 `Primeros 10 samples PCM16: ${pcm16.slice(0, 10).join(', ')}`,
@@ -119,10 +132,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
               this.logger.log(
                 `📥 Audio recibido: ${mulawBuffer.length} bytes µ-law → ${pcmBuffer.length} bytes PCM`,
-              );
-
-              this.logger.debug(
-                `Muestra PCM aleatoria: ${pcm16[Math.floor(Math.random() * pcm16.length)]}`,
               );
 
               if (pcmBuffer.length > 0 && this.deepgram.isConnected) {
@@ -168,17 +177,5 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     return resampled;
-  }
-
-  muLawDecode(muLawByte: number): number {
-    muLawByte = ~muLawByte & 0xff;
-
-    const sign = muLawByte & 0x80;
-    let exponent = (muLawByte >> 4) & 0x07;
-    let mantissa = muLawByte & 0x0F;
-    let sample = ((mantissa << 3) + 0x84) << exponent;
-    sample -= 0x84;
-
-    return sign ? -sample : sample;
   }
 }
