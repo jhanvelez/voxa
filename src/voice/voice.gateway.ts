@@ -25,8 +25,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private paymentDateAgreed: boolean = false;
   private agreedDate: string = '';
+  private interactionCount: number = 0;
   private consecutiveConfirmations: number = 0;
-  private lastUserMessage: string = '';
+  private hasGreeted: boolean = false;
 
   handleConnection(client: WebSocket) {
     this.logger.log('🔌 Twilio conectado');
@@ -34,8 +35,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     let isProcessing = false;
     this.paymentDateAgreed = false; // Resetear estado
     this.agreedDate = '';
+    this.interactionCount = 0;
     this.consecutiveConfirmations = 0;
-    this.lastUserMessage = '';
+    this.hasGreeted = false;
 
     client.on('message', async (message: Buffer) => {
       let data: any;
@@ -53,6 +55,13 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             streamSid = data.start.streamSid;
             this.logger.log(`🎙️ Stream iniciado (sid=${streamSid})`);
 
+            // ENVIAR SALUDO INMEDIATAMENTE
+            setTimeout(async () => {
+              if (!this.hasGreeted) {
+                await this.sendInitialGreeting(client, streamSid);
+              }
+            }, 1000);
+
             this.deepgram.connect(async (transcript) => {
               if (isProcessing) {
                 this.logger.warn('⚠️ Ya se está procesando una solicitud');
@@ -61,7 +70,25 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
               isProcessing = true;
               this.logger.log(`📝 Transcripción completa: ${transcript}`);
-              this.lastUserMessage = transcript;
+
+              if (transcript.trim().length < 3) {
+                isProcessing = false;
+                return;
+              }
+
+              this.interactionCount++;
+              this.logger.log(
+                `🔄 Interacción número: ${this.interactionCount}`,
+              );
+
+              if (this.interactionCount >= 5) {
+                this.logger.log(
+                  '⏰ Límite de interacciones alcanzado, cerrando llamada',
+                );
+                await this.forceCallEnd(client, streamSid);
+                isProcessing = false;
+                return;
+              }
 
               if (this.paymentDateAgreed) {
                 this.logger.log('✅ Fecha ya acordada, terminando llamada...');
@@ -289,5 +316,32 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch (err) {
       this.logger.error('❌ Error terminando llamada', err);
     }
+  }
+
+  private async sendInitialGreeting(
+    client: WebSocket,
+    streamSid: string,
+  ): Promise<void> {
+    if (this.hasGreeted) return;
+
+    this.hasGreeted = true;
+    const greeting =
+      'Buenos días, habla el agente de cobranzas. ¿Para cuándo me confirma el pago?';
+
+    this.logger.log(`🤖 Saludo inicial: ${greeting}`);
+    await this.sendAudioResponse(client, streamSid, greeting);
+  }
+
+  private async forceCallEnd(
+    client: WebSocket,
+    streamSid: string,
+  ): Promise<void> {
+    const finalMessage =
+      'Gracias por su tiempo. Nos comunicaremos nuevamente. Que tenga buen día.';
+    await this.sendAudioResponse(client, streamSid, finalMessage);
+
+    setTimeout(() => {
+      this.endCall(client, streamSid, 'fecha no confirmada');
+    }, 1000);
   }
 }
