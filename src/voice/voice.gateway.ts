@@ -9,6 +9,7 @@ import WebSocket, { Server } from 'ws';
 import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
+import { TwilioService } from '../twilio/twilio.service';
 
 @WebSocketGateway({ path: '/voice-stream' })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -18,6 +19,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private deepgram: DeepgramService,
     private llm: LlmService,
     private tts: TtsService,
+    private twilio: TwilioService,
   ) {}
 
   @WebSocketServer()
@@ -32,6 +34,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   handleConnection(client: WebSocket) {
     this.logger.log('🔌 Twilio conectado');
     let streamSid: string | null = null;
+    let callSid: string | null = null;
     let isProcessing = false;
     this.paymentDateAgreed = false; // Resetear estado
     this.agreedDate = '';
@@ -53,7 +56,13 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           case 'start':
             this.deepgram.stop();
             streamSid = data.start.streamSid;
+            callSid = data.start.callSid;
             this.logger.log(`🎙️ Stream iniciado (sid=${streamSid})`);
+            this.logger.log(`📞 Call SID: ${callSid}`);
+            this.logger.log(
+              `📋 Datos del start:`,
+              JSON.stringify(data.start, null, 2),
+            );
 
             // ENVIAR SALUDO INMEDIATAMENTE
             setTimeout(async () => {
@@ -85,14 +94,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 this.logger.log(
                   '⏰ Límite de interacciones alcanzado, cerrando llamada',
                 );
-                await this.forceCallEnd(client, streamSid);
+                await this.forceCallEnd(client, streamSid, callSid);
                 isProcessing = false;
                 return;
               }
 
               if (this.paymentDateAgreed) {
                 this.logger.log('✅ Fecha ya acordada, terminando llamada...');
-                await this.endCall(client, streamSid, this.agreedDate);
+                await this.endCall(client, streamSid, callSid, this.agreedDate);
                 isProcessing = false;
                 return;
               }
@@ -110,7 +119,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                   // Enviar confirmación final y terminar
                   await this.sendAudioResponse(client, streamSid, reply);
                   setTimeout(() => {
-                    this.endCall(client, streamSid, this.agreedDate);
+                    this.endCall(client, streamSid, callSid, this.agreedDate);
                   }, 1500);
                   isProcessing = false;
                   return;
@@ -138,7 +147,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                       finalMessage,
                     );
                     setTimeout(() => {
-                      this.endCall(client, streamSid, this.agreedDate);
+                      this.endCall(client, streamSid, callSid, this.agreedDate);
                     }, 1500);
                     isProcessing = false;
                     return;
@@ -298,20 +307,30 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private async endCall(
     client: WebSocket,
     streamSid: string,
+    callSid: string,
     agreedDate: string,
   ) {
     this.logger.log(`📞 Terminando llamada. Fecha acordada: ${agreedDate}`);
 
     try {
-      // Pequeña pausa antes de terminar
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
+      // Primero enviamos el stop al stream de WebSocket
       client.send(
         JSON.stringify({
           event: 'stop',
           streamSid,
         }),
       );
+
+      // Luego hacemos hangup de la llamada en Twilio
+      if (callSid) {
+        const hangupResult = await this.twilio.hangupCall(callSid);
+        if (hangupResult) {
+          this.logger.log('🛑 Llamada colgada exitosamente en Twilio');
+        } else {
+          this.logger.error('❌ Error colgando llamada en Twilio');
+        }
+      }
+
       this.logger.log('🛑 Llamada finalizada exitosamente');
     } catch (err) {
       this.logger.error('❌ Error terminando llamada', err);
@@ -335,13 +354,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private async forceCallEnd(
     client: WebSocket,
     streamSid: string,
+    callSid: string,
   ): Promise<void> {
     const finalMessage =
       'Gracias por su tiempo. Nos comunicaremos nuevamente. Que tenga buen día.';
     await this.sendAudioResponse(client, streamSid, finalMessage);
 
     setTimeout(() => {
-      this.endCall(client, streamSid, 'fecha no confirmada');
+      this.endCall(client, streamSid, callSid, 'fecha no confirmada');
     }, 1000);
   }
 }

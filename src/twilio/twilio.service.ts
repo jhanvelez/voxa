@@ -23,4 +23,14 @@ export class TwilioService {
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
     });
   }
+
+  async hangupCall(callSid: string) {
+    try {
+      await this.client.calls(callSid).update({ status: 'completed' });
+      return true;
+    } catch (error) {
+      console.error('Error hanging up call:', error);
+      return false;
+    }
+  }
 }
