@@ -12,11 +12,24 @@ export class TwilioService {
     );
   }
 
-  async makeCall(to: string, url: string) {
+  async makeCall(
+    to: string,
+    url: string,
+    customerData?: { name?: string; debt?: string },
+  ) {
+    // Construir URL con parámetros
+    let fullUrl = url;
+    if (customerData) {
+      const params = new URLSearchParams();
+      if (customerData.name) params.append('customerName', customerData.name);
+      if (customerData.debt) params.append('debtAmount', customerData.debt);
+      fullUrl = `${url}?${params.toString()}`;
+    }
+
     return await this.client.calls.create({
       to,
       from: process.env.TWILIO_PHONE_NUMBER!,
-      url, // URL donde Twilio buscará el TwiML
+      url: fullUrl, // URL donde Twilio buscará el TwiML con parámetros
       method: 'GET',
       statusCallback: `${process.env.APP_URL}/voice/status`,
       statusCallbackMethod: 'POST',

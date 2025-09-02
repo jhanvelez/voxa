@@ -31,8 +31,21 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private consecutiveConfirmations: number = 0;
   private hasGreeted: boolean = false;
 
-  handleConnection(client: WebSocket) {
+  handleConnection(client: WebSocket, req: any) {
     this.logger.log('🔌 Twilio conectado');
+
+    // Extraer parámetros de la URL del WebSocket
+    const url = new URL(req.url, 'ws://localhost');
+    const customerName = url.searchParams.get('customerName');
+    const debtAmount = url.searchParams.get('debtAmount');
+
+    this.logger.log(
+      `📋 Parámetros del cliente: nombre=${customerName}, deuda=${debtAmount}`,
+    );
+
+    // Configurar datos del cliente en el LLM
+    this.llm.setClientData(customerName, debtAmount);
+
     let streamSid: string | null = null;
     let callSid: string | null = null;
     let isProcessing = false;
@@ -67,7 +80,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             // ENVIAR SALUDO INMEDIATAMENTE
             setTimeout(async () => {
               if (!this.hasGreeted) {
-                await this.sendInitialGreeting(client, streamSid);
+                await this.sendInitialGreeting(client, streamSid, customerName);
               }
             }, 1000);
 
@@ -340,12 +353,15 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private async sendInitialGreeting(
     client: WebSocket,
     streamSid: string,
+    customerName?: string,
   ): Promise<void> {
     if (this.hasGreeted) return;
 
     this.hasGreeted = true;
-    const greeting =
-      'Hola, Jhan me comunica desde La Ofrenda, quería brindarte información sobre tu cuota pendiente y aclarar si tiene preguntas o dudas.';
+
+    // Personalizar saludo con el nombre del cliente
+    const name = customerName || 'Jhan';
+    const greeting = `Hola, ${name} me comunico desde La Ofrenda, quería brindarte información sobre tu cuota pendiente y aclarar si tienes preguntas o dudas.`;
 
     this.logger.log(`🤖 Saludo inicial: ${greeting}`);
     await this.sendAudioResponse(client, streamSid, greeting);

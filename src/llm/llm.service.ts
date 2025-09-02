@@ -7,6 +7,7 @@ export class LlmService {
     originalDueDate?: string;
     agreedDate?: string;
     serviceName: string;
+    debtAmount?: string;
   } = {
     clientName: 'Jhan',
     serviceName: 'La Ofrenda',
@@ -16,6 +17,16 @@ export class LlmService {
 
   constructor() {
     this.client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+
+  // Método para configurar los datos del cliente
+  setClientData(customerName?: string, debtAmount?: string): void {
+    if (customerName) {
+      this.conversationContext.clientName = customerName;
+    }
+    if (debtAmount) {
+      this.conversationContext.debtAmount = debtAmount;
+    }
   }
 
   // Método para extraer y recordar información clave

@@ -15,15 +15,26 @@ export class TwimlController {
       `Twiml requested. Method=${req.method} Headers=${JSON.stringify(req.headers)}`,
     );
 
+    // Obtener parámetros de la query string
+    const customerName = req.query.customerName as string;
+    const debtAmount = req.query.debtAmount as string;
+
+    this.logger.log(`Customer data: name=${customerName}, debt=${debtAmount}`);
+
     const vr = new twilio.twiml.VoiceResponse();
 
-    // Opcional: saludo
-    // vr.say({ voice: 'alice', language: 'es-ES' }, 'Hola, Robert');
-    // me comunico de La Ofrenda, quería brindarte información sobre tu cuota pendiente y aclarar si tienes preguntas o dudas.
+    // Conectar la llamada al WebSocket con parámetros
+    const streamUrl = 'wss://test.sustentiatec.com:3001/twilio-stream';
+    const streamParams = new URLSearchParams();
+    if (customerName) streamParams.append('customerName', customerName);
+    if (debtAmount) streamParams.append('debtAmount', debtAmount);
 
-    // Conectar la llamada al WebSocket (twilio media streams)
+    const fullStreamUrl = streamParams.toString()
+      ? `${streamUrl}?${streamParams.toString()}`
+      : streamUrl;
+
     vr.connect().stream({
-      url: 'wss://test.sustentiatec.com:3001/twilio-stream',
+      url: fullStreamUrl,
     });
 
     // Enviar XML EXACTO, sin espacios ni encabezados duplicados
