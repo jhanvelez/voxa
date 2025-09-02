@@ -14,9 +14,8 @@ export class DeepgramService {
     console.log('🔗 Conectando a Deepgram...');
     this.transcriptCallback = onTranscript;
 
-    // Mejor configuración para audio telefónico
-    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&endpointing=500&punctuate=true`;
-    // Added: interim_results, endpointing, punctuate
+    // Configuración ajustada para conversación telefónica
+    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&endpointing=1500&punctuate=true`;
 
     this.ws = new WebSocket(url, {
       headers: {
@@ -45,18 +44,19 @@ export class DeepgramService {
               `🔊 Deepgram: ${transcript} (final: ${isFinal}, speech_final: ${speechFinal})`,
             );
 
-            if (isFinal) {
-              // Transcripción final y completa
+            if (speechFinal) {
+              // ✅ Este es el evento correcto para considerar que terminó el turno
               this.lastFinalTranscript = transcript;
               if (this.transcriptCallback) {
                 this.transcriptCallback(transcript);
               }
               this.partialTranscript = '';
-            } else if (speechFinal) {
-              // Speech final pero no necessarily is_final
+            } else if (isFinal) {
+              // 👀 Deepgram corta segmentos intermedios aquí (ej: "d", "c.")
+              // No mandamos al LLM, solo actualizamos el parcial
               this.partialTranscript = transcript;
             } else {
-              // Transcripción parcial - acumular pero no procesar aún
+              // Transcripción en vivo (parcial)
               this.partialTranscript = transcript;
             }
           }
