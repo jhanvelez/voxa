@@ -69,6 +69,12 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 const reply = await this.llm.ask(transcript);
                 this.logger.log(`🤖 Respuesta LLM: ${reply}`);
 
+                if (this.isDateConfirmation(reply, transcript)) {
+                  this.paymentDateAgreed = true;
+                  this.agreedDate = this.extractDate(reply);
+                  this.logger.log(`📅 Fecha acordada: ${this.agreedDate}`);
+                }
+
                 // Sintetizar audio
                 const mulawBuffer = await this.tts.synthesizeToMuLaw8k(reply);
 
@@ -185,6 +191,42 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     return resampled;
+  }
+
+  // Método para detectar confirmación de fecha
+  private isDateConfirmation(
+    llmResponse: string,
+    userTranscript: string,
+  ): boolean {
+    const confirmationKeywords = [
+      'confirmo',
+      'acordado',
+      'quedamos',
+      'programado',
+      'perfecto',
+      'excelente',
+      'gracias',
+      'finalizado',
+      'terminamos',
+    ];
+
+    const datePattern =
+      /(\d{1,2}\s+(de\s+)?[a-z]+|(lunes|martes|miércoles|jueves|viernes|sábado|domingo))/i;
+
+    const hasDate = datePattern.test(llmResponse);
+    const hasConfirmation = confirmationKeywords.some((keyword) =>
+      llmResponse.toLowerCase().includes(keyword),
+    );
+
+    return hasDate && hasConfirmation;
+  }
+
+  // Método para extraer la fecha del texto
+  private extractDate(text: string): string {
+    const datePattern =
+      /(\d{1,2}\s+(de\s+)?[a-z]+|(lunes|martes|miércoles|jueves|viernes|sábado|domingo))/i;
+    const match = text.match(datePattern);
+    return match ? match[0] : 'fecha no especificada';
   }
 
   private async endCall(
