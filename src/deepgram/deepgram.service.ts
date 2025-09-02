@@ -34,7 +34,7 @@ export class DeepgramService {
     this.ws.on('message', (msg) => {
       try {
         const data = JSON.parse(msg.toString());
-        console.log('📨 Deepgram response:', JSON.stringify(data, null, 2));
+        // console.log('📨 Deepgram response:', JSON.stringify(data, null, 2));
 
         if (data.type === 'Results') {
           const transcript = data?.channel?.alternatives?.[0]?.transcript;
