@@ -15,6 +15,7 @@ export class DeepgramService {
 
   connect(onTranscript: (text: string) => void) {
     console.log('🔗 Conectando a Deepgram...');
+    console.log(`Token ${this.apiKey}`);
 
     const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&language=es&endpointing=1500&utterance_end_ms=1000`;
 
