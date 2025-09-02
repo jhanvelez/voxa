@@ -15,7 +15,7 @@ export class DeepgramService {
     this.transcriptCallback = onTranscript;
 
     // Configuración ajustada para conversación telefónica
-    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=mulaw&sample_rate=8000&channels=1&interim_results=true&endpointing=1500&punctuate=true`;
+    const url = `wss://api.deepgram.com/v1/listen?model=phonecall&encoding=linear16&sample_rate=8000&channels=1&language=es-419&interim_results=true&endpointing=1500&punctuate=true`;
 
     this.ws = new WebSocket(url, {
       headers: {
