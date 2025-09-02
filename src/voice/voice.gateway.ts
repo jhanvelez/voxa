@@ -225,22 +225,31 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     streamSid: string,
     text: string,
   ): Promise<void> {
-    const mulawBuffer = await this.tts.synthesizeToMuLaw8k(text);
-    const chunkSize = 160;
+    try {
+      const mulawBuffer = await this.tts.synthesizeToMuLaw8k(text);
+      const chunkSize = 160;
 
-    for (let i = 0; i < mulawBuffer.length; i += chunkSize) {
-      const chunk = mulawBuffer.subarray(i, i + chunkSize);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      client.send(
-        JSON.stringify({
-          event: 'media',
-          streamSid,
-          media: {
-            payload: chunk.toString('base64'),
-            track: 'inbound',
-          },
-        }),
-      );
+      // Enviar chunks más eficientemente
+      for (let i = 0; i < mulawBuffer.length; i += chunkSize) {
+        const chunk = mulawBuffer.subarray(i, i + chunkSize);
+
+        client.send(
+          JSON.stringify({
+            event: 'media',
+            streamSid,
+            media: {
+              payload: chunk.toString('base64'),
+              track: 'inbound',
+            },
+          }),
+        );
+        // Reducir el delay entre chunks
+        if (i % (chunkSize * 10) === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+      }
+    } catch (error) {
+      this.logger.error('Error sending audio response:', error);
     }
   }
 
