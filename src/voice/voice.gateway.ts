@@ -9,7 +9,6 @@ import WebSocket, { Server } from 'ws';
 import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
-import { decode } from 'mulaw-js';
 
 @WebSocketGateway({ path: '/voice-stream' })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -122,6 +121,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 `📥 Audio recibido: ${mulawBuffer.length} bytes µ-law → ${pcmBuffer.length} bytes PCM`,
               );
 
+              this.logger.debug(
+                `Muestra PCM aleatoria: ${pcm16[Math.floor(Math.random() * pcm16.length)]}`,
+              );
+
               if (pcmBuffer.length > 0 && this.deepgram.isConnected) {
                 this.deepgram.sendAudioChunk(pcmBuffer);
                 this.logger.log(
@@ -168,16 +171,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   muLawDecode(muLawByte: number): number {
-    const MULAW_MAX = 0x1FFF;
-    const BIAS = 0x84;
-
     muLawByte = ~muLawByte & 0xff;
 
-    let sign = muLawByte & 0x80;
+    const sign = muLawByte & 0x80;
     let exponent = (muLawByte >> 4) & 0x07;
     let mantissa = muLawByte & 0x0F;
-    let sample = ((mantissa << 4) + BIAS) << (exponent + 3);
+    let sample = ((mantissa << 3) + 0x84) << exponent;
+    sample -= 0x84;
 
-    return sign ? -(sample) : sample;
+    return sign ? -sample : sample;
   }
 }
