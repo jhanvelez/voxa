@@ -9,7 +9,7 @@ import WebSocket, { Server } from 'ws';
 import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
-// import { decode } from 'mulaw-js';
+import { decode } from 'mulaw-js';
 
 @WebSocketGateway({ path: '/voice-stream' })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -99,49 +99,22 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
 
-              if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
-                this.deepgram.sendAudioChunk(mulawBuffer);
-              }
-
-              /*
+              // 🔥 Convertir de µ-law → PCM16 (Int16Array)
               const pcm16 = decode(mulawBuffer);
 
-              let sumSquares = 0;
-              for (let i = 0; i < pcm16.length; i++) {
-                sumSquares += pcm16[i] * pcm16[i];
-              }
-              const rms = Math.sqrt(sumSquares / pcm16.length);
+              // Deepgram necesita un Buffer con PCM16 en little-endian
+              const pcmBuffer = Buffer.from(pcm16.buffer);
 
               this.logger.log(
-                `🔇 Volumen del paquete del audio capturado: ${rms}.`,
+                `📥 Audio recibido: ${mulawBuffer.length} bytes µ-law → ${pcmBuffer.length} bytes PCM`,
               );
 
-              if (rms < SILENCE_THRESHOLD) {
-                silenceCounter++;
-                if (silenceCounter >= SILENCE_FRAMES) {
-                  if (mulawBufferCounter && mulawBufferCounter.length > 200) {
-                    this.logger.log(
-                      `🔇 Silencio detectado, enviando audio de ${mulawBufferCounter.length} bytes`,
-                    );
-
-                    // 👉 Aquí mandas a Deepgram
-                    this.deepgram.sendAudioChunk(mulawBufferCounter);
-                    // this.deepgram.sendAudioChunk(mulawBufferCounter);
-
-                    mulawBufferCounter = undefined;
-                  }
-                  silenceCounter = 0;
-                }
-              } else {
-                silenceCounter = 0;
-
-                mulawBufferCounter = mulawBufferCounter
-                  ? Buffer.concat([mulawBufferCounter, mulawBuffer])
-                  : Buffer.from(mulawBuffer);
-
-                this.logger.log(`🎤 Voz detectada (RMS=${rms.toFixed(2)})`);
+              if (pcmBuffer.length > 0 && this.deepgram.isConnected) {
+                this.deepgram.sendAudioChunk(pcmBuffer);
+                this.logger.log(
+                  `📤 Enviado a Deepgram ${pcmBuffer.length} bytes`,
+                );
               }
-              */
             } catch (err) {
               this.logger.error('❌ Error procesando audio', err);
             }

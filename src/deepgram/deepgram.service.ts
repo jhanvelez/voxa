@@ -31,6 +31,7 @@ export class DeepgramService {
     });
 
     this.ws.on('message', (msg) => {
+      console.log('📩 Mensaje crudo de Deepgram:', msg.toString());
       try {
         const data = JSON.parse(msg.toString());
 
