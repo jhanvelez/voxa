@@ -101,10 +101,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
               const mulawUint8 = new Uint8Array(mulawBuffer);
 
-              // 2. Decodificar cada byte µ-law → PCM16
               const pcm16 = new Int16Array(mulawUint8.length);
+              // 2. Decodificar cada byte µ-law → PCM16
               for (let i = 0; i < mulawUint8.length; i++) {
-                pcm16[i] = decode(mulawUint8[i]); // decode espera un byte, no un buffer entero
+                pcm16[i] = this.muLawDecode(mulawUint8[i]);
               }
 
               // 3. Pasar a Buffer para Deepgram
@@ -165,5 +165,19 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     return resampled;
+  }
+
+  muLawDecode(muLawByte: number): number {
+    const MULAW_MAX = 0x1FFF;
+    const BIAS = 0x84;
+
+    muLawByte = ~muLawByte & 0xff;
+
+    let sign = muLawByte & 0x80;
+    let exponent = (muLawByte >> 4) & 0x07;
+    let mantissa = muLawByte & 0x0F;
+    let sample = ((mantissa << 4) + BIAS) << (exponent + 3);
+
+    return sign ? -(sample) : sample;
   }
 }
