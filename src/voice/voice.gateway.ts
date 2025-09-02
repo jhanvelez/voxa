@@ -116,6 +116,23 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
+
+              const first10 = Array.from(mulawBuffer.slice(0, 10)).join(', ');
+              this.logger.debug(`Primeros 10 bytes µ-law: ${first10}`);
+
+              this.logger.log(
+                `📥 Audio recibido: ${mulawBuffer.length} bytes µ-law`,
+              );
+
+              if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
+                // Envía el audio µ-law directamente sin convertir
+                this.deepgram.sendAudioChunk(mulawBuffer);
+                this.logger.log(
+                  `📤 Enviado a Deepgram ${mulawBuffer.length} bytes (µ-law)`,
+                );
+              }
+
+              /*
               const pcm16 = new Int16Array(mulawBuffer.length);
 
               for (let i = 0; i < mulawBuffer.length; i++) {
@@ -138,6 +155,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                   `📤 Enviado a Deepgram ${pcmBuffer.length} bytes`,
                 );
               }
+              */
             } catch (err) {
               this.logger.error('❌ Error procesando audio', err);
             }
