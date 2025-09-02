@@ -34,7 +34,7 @@ async function bootstrap() {
 
   wss.on('connection', (ws, req) => {
     const voiceGateway = app.get(VoiceGateway);
-    voiceGateway.handleConnection(ws);
+    voiceGateway.handleConnection(ws, req);
 
     ws.on('close', () => {
       console.log('Twilio WS cerrado');
