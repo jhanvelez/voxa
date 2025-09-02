@@ -1,15 +1,44 @@
-import { Injectable } from '@nestjs/common';
-import OpenAI from 'openai';
+import { OpenAI } from 'openai';
 
-@Injectable()
 export class LlmService {
   private client: OpenAI;
+  private conversationContext: {
+    clientName?: string;
+    originalDueDate?: string;
+    agreedDate?: string;
+    serviceName: string;
+  } = {
+    clientName: 'Jhan',
+    serviceName: 'La Ofrenda',
+    originalDueDate: '2023-09-01',
+    agreedDate: '2023-09-05',
+  };
 
   constructor() {
     this.client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   }
 
+  // Método para extraer y recordar información clave
+  private extractContextInfo(prompt: string): void {
+    // Extraer nombre si se menciona
+    const nameMatch = prompt.match(
+      /(?:me llamo|soy|mi nombre es)\s+([a-záéíóúñ\s]+)/i,
+    );
+    if (nameMatch) {
+      this.conversationContext.clientName = nameMatch[1].trim();
+    }
+
+    // Extraer fechas mencionadas
+    const dateMatch = prompt.match(/(\d{1,2})\s+de\s+([a-záéíóúñ]+)/i);
+    if (dateMatch) {
+      this.conversationContext.agreedDate = `${dateMatch[1]} de ${dateMatch[2]}`;
+    }
+  }
+
   async ask(prompt: string): Promise<string> {
+    // Extraer información del contexto
+    this.extractContextInfo(prompt);
+
     const today = new Date();
     const currentDate = today.toLocaleDateString('es-CO', {
       weekday: 'long',
@@ -17,12 +46,21 @@ export class LlmService {
       month: 'long',
     });
 
-    const res = await this.client.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `Eres un agente de cobranzas profesional colombiano. Tu objetivo es obtener una fecha exacta de pago dentro de los próximos 5 días hábiles de manera formal y cordial.
+    // Construir contexto dinámico
+    let systemContent = `Eres un agente de cobranzas profesional colombiano. Tu objetivo es obtener una fecha exacta de pago dentro de los próximos 5 días hábiles de manera formal y cordial.
+
+    INFORMACIÓN DEL CLIENTE:
+    - Servicio: ${this.conversationContext.serviceName}`;
+
+    if (this.conversationContext.clientName) {
+      systemContent += `\n- Nombre: ${this.conversationContext.clientName}`;
+    }
+
+    if (this.conversationContext.agreedDate) {
+      systemContent += `\n- Fecha acordada previamente: ${this.conversationContext.agreedDate}`;
+    }
+
+    systemContent += `\n- Fecha actual: ${currentDate}
 
     PERSONALIDAD Y TONO:
     - Formal pero cálido, como una ejecutiva bancaria profesional
@@ -36,55 +74,52 @@ export class LlmService {
     1. Mantén formalidad profesional en todo momento
     2. Usa números en texto completo (cuatro de septiembre, no 4)
     3. Siempre menciona "el servicio La Ofrenda"
-    4. Máximo 5 días hábiles desde hoy (${currentDate})
-    5. Ofrece opciones de fechas específicas
+    4. Máximo 5 días hábiles desde hoy
+    5. Si ya tienes el nombre del cliente, úsalo apropiadamente
     6. Menciona consecuencias de manera educada (intereses, suspensión)
     7. Finaliza pidiendo confirmación explícita
-
-    ESTRUCTURA DE RESPUESTAS:
-    - Saludo formal con nombre si se proporciona
-    - Recordatorio específico del vencimiento
-    - Solicitud clara de fecha de pago
-    - Mención de consecuencias de manera educada
-    - Propuesta de fecha concreta
+    8. No uses signos de puntuación como puntos seguidos, suspensivos, comas, etc.
 
     EJEMPLOS APROPIADOS:
-    "Buenos días señor García, le recordamos que tiene pendiente el pago de su cuota del servicio La Ofrenda con vencimiento el cuatro de septiembre, ¿para qué fecha podría confirmarme el pago?"
+    "Hola, ${this.conversationContext.clientName ? this.conversationContext.clientName : 'cliente'} me comunica desde La Ofrenda, quería brindarte información sobre tu cuota pendiente y aclarar si tiene preguntas o dudas."
 
-    "Entiendo su situación, sin embargo necesitamos definir una fecha específica para evitar intereses adicionales, ¿podría realizarlo el viernes seis de septiembre?"
+    "Buenos días${this.conversationContext.clientName ? ' señor ' + this.conversationContext.clientName : ''}, le recordamos que tiene pendiente el pago de su cuota del servicio La Ofrenda, ¿para qué fecha podría confirmarme el pago?"
 
-    "Perfecto señor García, queda confirmado su pago del servicio La Ofrenda para el lunes nueve de septiembre, muchas gracias por su compromiso"
+    "Perfecto${this.conversationContext.clientName ? ' señor ' + this.conversationContext.clientName : ''}, queda confirmado su pago del servicio La Ofrenda para el [fecha], muchas gracias por su compromiso"`;
 
-    EVITAR:
-    - Lenguaje informal o coloquial
-    - Tuteo (usa siempre "usted")
-    - Presión agresiva
-    - Fechas en números (9/09)
-    - Respuestas vagas sin fecha específica
-
-    INFORMACIÓN CLAVE A RECORDAR:
-    - Servicio: "La Ofrenda"
-    - Fecha de vencimiento original mencionada
-    - Nombre del cliente si se proporciona
-    - Fecha acordada durante la conversación`,
-        },
+    const res = await this.client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemContent },
         { role: 'user', content: prompt.toLowerCase() },
       ],
-      temperature: 0.2, // Ligeramente más alta para naturalidad
-      max_tokens: 100, // Más tokens para respuestas completas pero profesionales
+      temperature: 0.15,
+      max_tokens: 80,
     });
 
     let text = res.choices?.[0]?.message?.content ?? '';
 
     // Limpieza y normalización del texto
     text = text
-      .replace(/\.\.\./g, ' ') // Elimina puntos suspensivos
-      .replace(/\s+/g, ' ') // Elimina espacios múltiples
-      .replace(/[.,;:!?]{2,}/g, '') // Elimina signos de puntuación múltiples
-      .replace(/\b\d+\b/g, (match) => this.numberToText(match)) // Convierte números a texto
+      .replace(/\.\.\./g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/[.,;:!?]{2,}/g, '')
+      .replace(/\b\d+\b/g, (match) => this.numberToText(match))
       .trim();
 
     return text;
+  }
+
+  // Método para obtener la fecha acordada (útil para el VoiceGateway)
+  getAgreedDate(): string | undefined {
+    return this.conversationContext.agreedDate;
+  }
+
+  // Método para resetear el contexto (nueva conversación)
+  resetContext(): void {
+    this.conversationContext = {
+      serviceName: 'La Ofrenda',
+    };
   }
 
   private numberToText(numberStr: string): string {
