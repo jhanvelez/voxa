@@ -79,6 +79,8 @@ export class LlmService {
     6. Menciona consecuencias de manera educada (intereses, suspensión)
     7. Finaliza pidiendo confirmación explícita
     8. No uses signos de puntuación como puntos seguidos, suspensivos, comas, etc.
+    9. Por favor genera respuestas cortas entre 80 y 110 carácteres.
+    10. Por favor solo saluda una sola vez al inicio de la conversación.
 
     EJEMPLOS APROPIADOS:
     "Hola, ${this.conversationContext.clientName ? this.conversationContext.clientName : 'cliente'} me comunica desde La Ofrenda, quería brindarte información sobre tu cuota pendiente y aclarar si tiene preguntas o dudas."
@@ -93,7 +95,7 @@ export class LlmService {
         { role: 'system', content: systemContent },
         { role: 'user', content: prompt.toLowerCase() },
       ],
-      temperature: 0.15,
+      temperature: 0.2,
       max_tokens: 80,
     });
 
