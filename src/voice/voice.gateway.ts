@@ -9,7 +9,7 @@ import WebSocket, { Server } from 'ws';
 import { DeepgramService } from '../deepgram/deepgram.service';
 import { LlmService } from '../llm/llm.service';
 import { TtsService } from '../tts/tts.service';
-import { decode } from 'mulaw-js';
+// import { decode } from 'mulaw-js';
 
 @WebSocketGateway({ path: '/voice-stream' })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -29,10 +29,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     let streamSid: string | null = null;
     let isProcessing = false;
 
-    const SILENCE_THRESHOLD = 200;
-    const SILENCE_FRAMES = 5;
-    let mulawBufferCounter: Buffer | undefined = undefined;
-    let silenceCounter = 0;
+    // const SILENCE_THRESHOLD = 200;
+    // const SILENCE_FRAMES = 5;
+    // let mulawBufferCounter: Buffer | undefined = undefined;
+    // let silenceCounter = 0;
 
     client.on('message', async (message: Buffer) => {
       let data: any;
@@ -99,6 +99,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
 
+              if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
+                this.deepgram.sendAudioChunk(mulawBuffer);
+              }
+
+              /*
               const pcm16 = decode(mulawBuffer);
 
               let sumSquares = 0;
@@ -107,15 +112,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               }
               const rms = Math.sqrt(sumSquares / pcm16.length);
 
-              /*
               this.logger.log(
                 `🔇 Volumen del paquete del audio capturado: ${rms}.`,
               );
-              */
-
-              if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
-                // this.deepgram.sendAudioChunk(mulawBuffer);
-              }
 
               if (rms < SILENCE_THRESHOLD) {
                 silenceCounter++;
@@ -142,24 +141,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
                 this.logger.log(`🎤 Voz detectada (RMS=${rms.toFixed(2)})`);
               }
-
-              /*
-              if (mulawBuffer.length < 20) {
-                silenceCounter++;
-                if (silenceCounter >= SILENCE_THRESHOLD) {
-                  this.logger.log(
-                    '🔇 Silencio detectado, forzando procesamiento',
-                  );
-                  silenceCounter = 0;
-                }
-              } else {
-                silenceCounter++;
-              }
               */
-
-              if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
-                // this.deepgram.sendAudioChunk(mulawBuffer);
-              }
             } catch (err) {
               this.logger.error('❌ Error procesando audio', err);
             }
