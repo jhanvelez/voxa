@@ -78,14 +78,14 @@ export class LlmService {
     5. Si ya tienes el nombre del cliente, úsalo apropiadamente
     6. Menciona consecuencias de manera educada (intereses, suspensión)
     7. Finaliza pidiendo confirmación explícita
-    8. No uses signos de puntuación como puntos seguidos, suspensivos, comas, etc.
-    9. Por favor genera respuestas cortas entre 80 y 110 carácteres.
-    10. Por favor solo saluda una sola vez al inicio de la conversación.
+    8. No uses signos de puntuación como puntos seguidos, suspensivos, comas, etc (esto es estricto).
+    9. Por favor genera respuestas cortas entre 50 y 100 carácteres.
+    10. Por favor solo saluda una sola vez al inicio de la conversación, no digas buenos días, tardes o noches más de una vez.
 
     EJEMPLOS APROPIADOS:
     "Hola, ${this.conversationContext.clientName ? this.conversationContext.clientName : 'cliente'} me comunica desde La Ofrenda, quería brindarte información sobre tu cuota pendiente y aclarar si tiene preguntas o dudas."
 
-    "Buenos días${this.conversationContext.clientName ? ' señor ' + this.conversationContext.clientName : ''}, le recordamos que tiene pendiente el pago de su cuota del servicio La Ofrenda, ¿para qué fecha podría confirmarme el pago?"
+    "Le recordamos señor ${this.conversationContext.clientName ? this.conversationContext.clientName : 'cliente'} que tiene pendiente el pago de su cuota del servicio La Ofrenda, ¿para qué fecha podría confirmarme el pago?"
 
     "Perfecto${this.conversationContext.clientName ? ' señor ' + this.conversationContext.clientName : ''}, queda confirmado su pago del servicio La Ofrenda para el [fecha], muchas gracias por su compromiso"`;
 
