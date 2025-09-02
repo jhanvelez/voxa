@@ -28,8 +28,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log('🔌 Twilio conectado');
     let streamSid: string | null = null;
     let isProcessing = false;
-    let mulawBufferCounter = undefined;
+
     const SILENCE_THRESHOLD = 200;
+    const SILENCE_FRAMES = 5;
+    let mulawBufferCounter: Buffer | undefined = undefined;
+    let silenceCounter = 0;
 
     client.on('message', async (message: Buffer) => {
       let data: any;
@@ -110,31 +113,35 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               );
               */
 
+              if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
+                // this.deepgram.sendAudioChunk(mulawBuffer);
+              }
+
               if (rms < SILENCE_THRESHOLD) {
-                // Aqui se entra cuando se encuentre un silencio:
-                setTimeout(() => {
-                  if (mulawBufferCounter != undefined) {
+                silenceCounter++;
+                if (silenceCounter >= SILENCE_FRAMES) {
+                  if (mulawBufferCounter && mulawBufferCounter.length > 200) {
                     this.logger.log(
-                      `Tamano del paquete real: ${mulawBufferCounter.length}`,
+                      `🔇 Silencio detectado, enviando audio de ${mulawBufferCounter.length} bytes`,
                     );
 
-                    if (mulawBufferCounter.length > 200) {
-                      // Enviarlo
-                    }
+                    // 👉 Aquí mandas a Deepgram
+                    setTimeout(() => {
+                      this.deepgram.sendAudioChunk(mulawBufferCounter);
+                    }, 500);
+                    // this.deepgram.sendAudioChunk(mulawBufferCounter);
 
                     mulawBufferCounter = undefined;
                   }
-
-                  this.logger.log(
-                    '🔇 Silencio detectado, forzando procesamiento',
-                  );
-                }, 100);
-
-                if (mulawBufferCounter == undefined) {
-                  // Se ha enviado al deepgram y espera respuesta
+                  silenceCounter = 0;
                 }
               } else {
-                mulawBufferCounter += mulawBuffer;
+                silenceCounter = 0;
+
+                mulawBufferCounter = mulawBufferCounter
+                  ? Buffer.concat([mulawBufferCounter, mulawBuffer])
+                  : Buffer.from(mulawBuffer);
+
                 this.logger.log(`🎤 Voz detectada (RMS=${rms.toFixed(2)})`);
               }
 
