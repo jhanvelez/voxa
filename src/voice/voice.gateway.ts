@@ -113,9 +113,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               if (rms < SILENCE_THRESHOLD) {
                 // Aqui se entra cuando se encuentre un silencio:
                 setTimeout(() => {
-                  this.logger.log(
-                    `Tamano del paquete real: ${mulawBufferCounter.length}`,
-                  );
+                  if (mulawBufferCounter != undefined) {
+                    this.logger.log(
+                      `Tamano del paquete real: ${mulawBufferCounter.length}`,
+                    );
+                  }
 
                   if (mulawBufferCounter.length > 200) {
                     // Enviarlo
