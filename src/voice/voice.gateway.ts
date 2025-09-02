@@ -126,9 +126,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                     );
 
                     // 👉 Aquí mandas a Deepgram
-                    setTimeout(() => {
-                      this.deepgram.sendAudioChunk(mulawBufferCounter);
-                    }, 500);
+                    this.deepgram.sendAudioChunk(mulawBufferCounter);
                     // this.deepgram.sendAudioChunk(mulawBufferCounter);
 
                     mulawBufferCounter = undefined;
