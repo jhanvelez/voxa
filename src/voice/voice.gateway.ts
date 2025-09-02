@@ -25,6 +25,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private paymentDateAgreed: boolean = false;
   private agreedDate: string = '';
+  private consecutiveConfirmations: number = 0;
+  private lastUserMessage: string = '';
 
   handleConnection(client: WebSocket) {
     this.logger.log('🔌 Twilio conectado');
@@ -32,6 +34,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     let isProcessing = false;
     this.paymentDateAgreed = false; // Resetear estado
     this.agreedDate = '';
+    this.consecutiveConfirmations = 0;
+    this.lastUserMessage = '';
 
     client.on('message', async (message: Buffer) => {
       let data: any;
@@ -57,6 +61,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
               isProcessing = true;
               this.logger.log(`📝 Transcripción completa: ${transcript}`);
+              this.lastUserMessage = transcript;
 
               if (this.paymentDateAgreed) {
                 this.logger.log('✅ Fecha ya acordada, terminando llamada...');
@@ -69,31 +74,54 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 const reply = await this.llm.ask(transcript);
                 this.logger.log(`🤖 Respuesta LLM: ${reply}`);
 
-                if (this.isDateConfirmation(reply, transcript)) {
+                // Detectar si es confirmación final del agente
+                if (this.isFinalConfirmation(reply)) {
                   this.paymentDateAgreed = true;
                   this.agreedDate = this.extractDate(reply);
                   this.logger.log(`📅 Fecha acordada: ${this.agreedDate}`);
+
+                  // Enviar confirmación final y terminar
+                  await this.sendAudioResponse(client, streamSid, reply);
+                  setTimeout(() => {
+                    this.endCall(client, streamSid, this.agreedDate);
+                  }, 1500);
+                  isProcessing = false;
+                  return;
                 }
 
-                // Sintetizar audio
-                const mulawBuffer = await this.tts.synthesizeToMuLaw8k(reply);
-
-                // Enviar audio en chunks
-                const chunkSize = 160;
-                for (let i = 0; i < mulawBuffer.length; i += chunkSize) {
-                  const chunk = mulawBuffer.subarray(i, i + chunkSize);
-                  await new Promise((resolve) => setTimeout(resolve, 10)); // Pequeña pausa
-                  client.send(
-                    JSON.stringify({
-                      event: 'media',
-                      streamSid,
-                      media: {
-                        payload: chunk.toString('base64'),
-                        track: 'inbound',
-                      },
-                    }),
+                // Detectar confirmaciones consecutivas del usuario
+                if (this.isUserConfirmation(transcript)) {
+                  this.consecutiveConfirmations++;
+                  this.logger.log(
+                    `🔄 Confirmaciones consecutivas: ${this.consecutiveConfirmations}`,
                   );
+
+                  if (this.consecutiveConfirmations >= 2) {
+                    this.paymentDateAgreed = true;
+                    this.agreedDate = this.extractDateFromContext(
+                      transcript,
+                      reply,
+                    );
+                    this.logger.log(`📅 Fecha inferida: ${this.agreedDate}`);
+
+                    const finalMessage = `Perfecto confirmo su pago para el ${this.agreedDate} gracias por su compromiso`;
+                    await this.sendAudioResponse(
+                      client,
+                      streamSid,
+                      finalMessage,
+                    );
+                    setTimeout(() => {
+                      this.endCall(client, streamSid, this.agreedDate);
+                    }, 1500);
+                    isProcessing = false;
+                    return;
+                  }
+                } else {
+                  this.consecutiveConfirmations = 0;
                 }
+
+                // Respuesta normal
+                await this.sendAudioResponse(client, streamSid, reply);
               } catch (err) {
                 this.logger.error('❌ Error en pipeline LLM/TTS', err);
               } finally {
@@ -111,49 +139,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             try {
               const mulawBuffer = Buffer.from(data.media.payload, 'base64');
 
-              /*
-              const first10 = Array.from(mulawBuffer.slice(0, 10)).join(', ');
-              this.logger.debug(`Primeros 10 bytes µ-law: ${first10}`);
-
-              this.logger.log(
-                `📥 Audio recibido: ${mulawBuffer.length} bytes µ-law`,
-              );
-              */
-
               if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
-                // Envía el audio µ-law directamente sin convertir
                 this.deepgram.sendAudioChunk(mulawBuffer);
-                /*
-                this.logger.log(
-                  `📤 Enviado a Deepgram ${mulawBuffer.length} bytes (µ-law)`,
-                );
-                */
               }
-
-              /*
-              const pcm16 = new Int16Array(mulawBuffer.length);
-
-              for (let i = 0; i < mulawBuffer.length; i++) {
-                pcm16[i] = this.muLawDecode(mulawBuffer[i]);
-              }
-
-              const pcmBuffer = Buffer.from(pcm16.buffer);
-
-              this.logger.debug(
-                `Primeros 10 samples PCM16: ${pcm16.slice(0, 10).join(', ')}`,
-              );
-
-              this.logger.log(
-                `📥 Audio recibido: ${mulawBuffer.length} bytes µ-law → ${pcmBuffer.length} bytes PCM`,
-              );
-
-              if (pcmBuffer.length > 0 && this.deepgram.isConnected) {
-                this.deepgram.sendAudioChunk(pcmBuffer);
-                this.logger.log(
-                  `📤 Enviado a Deepgram ${pcmBuffer.length} bytes`,
-                );
-              }
-              */
             } catch (err) {
               this.logger.error('❌ Error procesando audio', err);
             }
@@ -182,23 +170,34 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.terminate();
   }
 
-  resamplePCM16To16k(pcm8k: Int16Array): Int16Array {
-    const factor = 2; // 8k → 16k
-    const resampled = new Int16Array(pcm8k.length * factor);
+  // Método para enviar respuesta de audio
+  private async sendAudioResponse(
+    client: WebSocket,
+    streamSid: string,
+    text: string,
+  ): Promise<void> {
+    const mulawBuffer = await this.tts.synthesizeToMuLaw8k(text);
+    const chunkSize = 160;
 
-    for (let i = 0; i < resampled.length; i++) {
-      resampled[i] = pcm8k[Math.floor(i / factor)];
+    for (let i = 0; i < mulawBuffer.length; i += chunkSize) {
+      const chunk = mulawBuffer.subarray(i, i + chunkSize);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      client.send(
+        JSON.stringify({
+          event: 'media',
+          streamSid,
+          media: {
+            payload: chunk.toString('base64'),
+            track: 'inbound',
+          },
+        }),
+      );
     }
-
-    return resampled;
   }
 
-  // Método para detectar confirmación de fecha
-  private isDateConfirmation(
-    llmResponse: string,
-    userTranscript: string,
-  ): boolean {
-    const confirmationKeywords = [
+  // Detectar confirmación final del agente
+  private isFinalConfirmation(llmResponse: string): boolean {
+    const finalKeywords = [
       'confirmo',
       'acordado',
       'quedamos',
@@ -208,23 +207,63 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       'gracias',
       'finalizado',
       'terminamos',
+      'queda confirmado',
+      'muchas gracias',
     ];
 
-    const datePattern =
-      /(\d{1,2}\s+(de\s+)?[a-z]+|(lunes|martes|miércoles|jueves|viernes|sábado|domingo))/i;
-
-    const hasDate = datePattern.test(llmResponse);
-    const hasConfirmation = confirmationKeywords.some((keyword) =>
+    const hasFinalKeyword = finalKeywords.some((keyword) =>
       llmResponse.toLowerCase().includes(keyword),
     );
 
-    return hasDate && hasConfirmation;
+    const hasDate = this.extractDate(llmResponse) !== 'fecha no especificada';
+
+    return hasFinalKeyword && hasDate;
   }
 
-  // Método para extraer la fecha del texto
+  // Detectar confirmación del usuario
+  private isUserConfirmation(userTranscript: string): boolean {
+    const confirmationWords = [
+      'sí',
+      'si',
+      'claro',
+      'por supuesto',
+      'ok',
+      'okey',
+      'de acuerdo',
+      'confirmo',
+      'acepto',
+      'está bien',
+      'perfecto',
+      'excelente',
+    ];
+
+    return confirmationWords.some((word) =>
+      userTranscript.toLowerCase().includes(word),
+    );
+  }
+
+  // Extraer fecha del contexto
+  private extractDateFromContext(
+    userTranscript: string,
+    llmResponse: string,
+  ): string {
+    // Primero intentar extraer de la respuesta del LLM
+    const llmDate = this.extractDate(llmResponse);
+    if (llmDate !== 'fecha no especificada') {
+      return llmDate;
+    }
+
+    // Si no, buscar en el historial o usar fecha por defecto
+    const datePattern =
+      /(lunes|martes|miércoles|jueves|viernes|sábado|domingo)|(\d{1,2}\s+de\s+[a-z]+)/i;
+    const match = userTranscript.match(datePattern);
+
+    return match ? match[0] : 'próximo día hábil';
+  }
+
   private extractDate(text: string): string {
     const datePattern =
-      /(\d{1,2}\s+(de\s+)?[a-z]+|(lunes|martes|miércoles|jueves|viernes|sábado|domingo))/i;
+      /(lunes|martes|miércoles|jueves|viernes|sábado|domingo)|(\d{1,2}\s+de\s+[a-z]+)/i;
     const match = text.match(datePattern);
     return match ? match[0] : 'fecha no especificada';
   }
@@ -237,36 +276,16 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(`📞 Terminando llamada. Fecha acordada: ${agreedDate}`);
 
     try {
-      // Enviar mensaje de despedida
-      const goodbyeMessage = `Su pago ha sido programado para el ${agreedDate}. Gracias por su compromiso.`;
-      const goodbyeAudio = await this.tts.synthesizeToMuLaw8k(goodbyeMessage);
+      // Pequeña pausa antes de terminar
+      await new Promise((resolve) => setTimeout(resolve, 500));
 
-      const chunkSize = 160;
-      for (let i = 0; i < goodbyeAudio.length; i += chunkSize) {
-        const chunk = goodbyeAudio.subarray(i, i + chunkSize);
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        client.send(
-          JSON.stringify({
-            event: 'media',
-            streamSid,
-            media: {
-              payload: chunk.toString('base64'),
-              track: 'inbound',
-            },
-          }),
-        );
-      }
-
-      // Esperar a que se envíe el audio y luego terminar
-      setTimeout(() => {
-        client.send(
-          JSON.stringify({
-            event: 'stop',
-            streamSid,
-          }),
-        );
-        this.logger.log('🛑 Llamada finalizada');
-      }, 1000);
+      client.send(
+        JSON.stringify({
+          event: 'stop',
+          streamSid,
+        }),
+      );
+      this.logger.log('🛑 Llamada finalizada exitosamente');
     } catch (err) {
       this.logger.error('❌ Error terminando llamada', err);
     }
