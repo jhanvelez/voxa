@@ -117,12 +117,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                     this.logger.log(
                       `Tamano del paquete real: ${mulawBufferCounter.length}`,
                     );
+
+                    if (mulawBufferCounter.length > 200) {
+                      // Enviarlo
+                    }
+
+                    mulawBufferCounter = undefined;
                   }
 
-                  if (mulawBufferCounter.length > 200) {
-                    // Enviarlo
-                  }
-                  mulawBufferCounter = undefined;
                   this.logger.log(
                     '🔇 Silencio detectado, forzando procesamiento',
                   );
