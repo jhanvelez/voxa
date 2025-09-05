@@ -24,7 +24,7 @@ export class TwimlController {
     const vr = new twilio.twiml.VoiceResponse();
 
     // Conectar la llamada al WebSocket con parámetros
-    const streamUrl = 'wss://test.sustentiatec.com:3001/twilio-stream';
+    const streamUrl = 'wss://voxa.asistencia360.co:3001/twilio-stream';
     const streamParams = new URLSearchParams();
     if (customerName) streamParams.append('customerName', customerName);
     if (debtAmount) streamParams.append('debtAmount', debtAmount);
