@@ -125,37 +125,64 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private setupDeepgram(client: WebSocket, streamSid: string, callSid: string, isProcessingUserInput: boolean) {
     this.deepgram.connect(async (transcript) => {
-      // Reiniciar timeout con cada interacción
-      this.resetSilenceTimeout(() => {
-        this.handleSilenceTimeout(client, streamSid, callSid);
-      });
+      // ... código existente ...
 
-      // Ignorar transcripciones cortas durante speech del agente
-      if (this.isAgentSpeaking && transcript.trim().length < 5) {
+      // Nueva lógica: si el usuario confirma explícitamente, procesar inmediatamente
+      if (this.isExplicitUserConfirmation(transcript) && !this.paymentDateAgreed) {
+        this.logger.log('✅ Confirmación explícita detectada');
+        isProcessingUserInput = true;
+        await this.handleUserConfirmation(transcript, client, streamSid, callSid);
+        isProcessingUserInput = false;
         return;
       }
 
-      // Si el agente está hablando y usuario interrumpe significativamente
-      if (this.isAgentSpeaking && transcript.trim().length > 3) {
-        this.logger.log(`🗣️ Interrupción: ${transcript}`);
-        this.interruptionCount++;
-        
-        // Solo interrumpir después de múltiples interrupciones
-        if (this.interruptionCount >= 2) {
-          this.isAgentSpeaking = false;
-          this.audioQueue = []; // Limpiar cola de audio
-        }
-      }
-
-      if (isProcessingUserInput || transcript.trim().length < 2) {
-        return;
-      }
-
-      isProcessingUserInput = true;
-      await this.processUserInput(transcript, client, streamSid, callSid);
-      isProcessingUserInput = false;
+      // ... resto del código existente ...
     });
   }
+
+  private isExplicitUserConfirmation(transcript: string): boolean {
+    const explicitConfirmations = [
+      'sí acepto', 'sí confirmo', 'claro que sí', 'por supuesto que sí',
+      'estoy de acuerdo', 'me parece bien', 'confirmo el pago', 'acepto la fecha'
+    ];
+
+    const lowerTranscript = transcript.toLowerCase();
+    return explicitConfirmations.some(confirmation => 
+      lowerTranscript.includes(confirmation)
+    );
+  }
+
+  private async handleUserConfirmation(transcript: string, client: WebSocket, streamSid: string, callSid: string) {
+    this.paymentDateAgreed = true;
+    
+    // Intentar extraer la fecha del contexto o usar una por defecto
+    this.agreedDate = this.extractDateFromContext(transcript, '');
+    if (this.agreedDate === 'fecha no especificada') {
+      this.agreedDate = this.getDefaultPaymentDate();
+    }
+
+    const finalMessage = `Perfecto, confirmo su pago para el ${this.agreedDate} del servicio La Ofrenda. Muchas gracias por su compromiso.`;
+    await this.sendAudioResponse(client, streamSid, finalMessage);
+    
+    setTimeout(() => this.endCall(client, streamSid, callSid, this.agreedDate), 3000);
+  }
+
+  private getDefaultPaymentDate(): string {
+    // 3 días hábiles a partir de hoy
+    const date = new Date();
+    let businessDays = 0;
+    
+    while (businessDays < 3) {
+      date.setDate(date.getDate() + 1);
+      if (date.getDay() !== 0 && date.getDay() !== 6) {
+        businessDays++;
+      }
+    }
+    
+    return this.formatDate(date);
+  }
+
+  // ========== MÉTODOS MEJORADOS PARA DETECCIÓN DE CONFIRMACIÓN ==========
 
   private async processUserInput(transcript: string, client: WebSocket, streamSid: string, callSid: string) {
     this.logger.log(`📝 Usuario: ${transcript}`);
@@ -178,12 +205,22 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const reply = await this.llm.ask(transcript);
       this.logger.log(`🤖 Agente: ${reply}`);
 
-      // Verificar si es confirmación final
-      if (this.isFinalConfirmation(reply)) {
+      // Verificar si es confirmación final DEL AGENTE
+      if (this.isAgentFinalConfirmation(reply)) {
         this.paymentDateAgreed = true;
         this.agreedDate = this.extractDate(reply);
         await this.sendAudioResponse(client, streamSid, reply);
         setTimeout(() => this.endCall(client, streamSid, callSid, this.agreedDate), 2000);
+        return;
+      }
+
+      // Verificar si es confirmación del USUARIO después de una propuesta de fecha
+      if (this.isUserConfirmingDate(transcript, reply)) {
+        this.paymentDateAgreed = true;
+        this.agreedDate = this.extractDateFromContext(transcript, reply);
+        const finalConfirmation = `Perfecto, confirmo su pago para el ${this.agreedDate} del servicio La Ofrenda. Muchas gracias por su compromiso.`;
+        await this.sendAudioResponse(client, streamSid, finalConfirmation);
+        setTimeout(() => this.endCall(client, streamSid, callSid, this.agreedDate), 3000);
         return;
       }
 
@@ -193,6 +230,133 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch (err) {
       this.logger.error('❌ Error en LLM/TTS', err);
     }
+  }
+
+  // Mejor detección de confirmación final del AGENTE
+  private isAgentFinalConfirmation(llmResponse: string): boolean {
+    const finalKeywords = [
+      'confirmo', 'acordado', 'perfecto', 'excelente', 'gracias', 
+      'queda confirmado', 'muchas gracias', 'finalizado', 'terminamos',
+      'quedamos', 'registrado', 'aprobado', 'confirmado'
+    ];
+    
+    const hasFinalKeyword = finalKeywords.some(keyword => 
+      llmResponse.toLowerCase().includes(keyword)
+    );
+    
+    const hasDate = this.extractDate(llmResponse) !== 'fecha no especificada';
+    const hasThankYou = llmResponse.toLowerCase().includes('gracias');
+    const hasGoodbye = llmResponse.toLowerCase().includes('buen día') || 
+                      llmResponse.toLowerCase().includes('adiós') ||
+                      llmResponse.toLowerCase().includes('hasta luego');
+
+    return (hasFinalKeyword && hasDate) || (hasThankYou && hasGoodbye && hasDate);
+  }
+
+  // Detección de confirmación del USUARIO
+  private isUserConfirmingDate(userTranscript: string, agentResponse: string): boolean {
+    // Verificar si el agente acaba de proponer una fecha
+    const agentProposedDate = this.extractDate(agentResponse) !== 'fecha no especificada';
+    const agentAskingConfirmation = agentResponse.toLowerCase().includes('¿está de acuerdo?') ||
+                                  agentResponse.toLowerCase().includes('¿le parece bien?') ||
+                                  agentResponse.toLowerCase().includes('confirmamos?');
+
+    // Verificar confirmación del usuario
+    const userConfirmation = this.isUserConfirmation(userTranscript);
+    
+    return agentProposedDate && agentAskingConfirmation && userConfirmation;
+  }
+
+  // Mejor detección de confirmación del usuario
+  private isUserConfirmation(userTranscript: string): boolean {
+    const confirmationWords = [
+      'sí', 'si', 'claro', 'por supuesto', 'ok', 'okey', 'de acuerdo', 
+      'confirmo', 'acepto', 'está bien', 'perfecto', 'excelente', 'vale',
+      'correcto', 'afirmativo', 'me parece bien', 'estoy de acuerdo'
+    ];
+
+    const userText = userTranscript.toLowerCase();
+    
+    // Buscar palabras de confirmación
+    const hasConfirmationWord = confirmationWords.some(word => 
+      userText.includes(word)
+    );
+
+    // Buscar patrones de confirmación más complejos
+    const confirmationPatterns = [
+      /sí.*(señor|señora|amigo|amiga)/i,
+      /claro que sí/i,
+      /por supuesto que sí/i,
+      /me parece bien/i,
+      /estoy de acuerdo/i,
+      /(está|esta) bien/i,
+      /(vale|ok|okey).*(sí|si)/i
+    ];
+
+    const hasConfirmationPattern = confirmationPatterns.some(pattern => 
+      pattern.test(userText)
+    );
+
+    return hasConfirmationWord || hasConfirmationPattern;
+  }
+
+  // Mejor extracción de fecha
+  private extractDate(text: string): string {
+    const datePatterns = [
+      /(\d{1,2})\s+de\s+([a-záéíóúñ]+)/i,
+      /(lunes|martes|miércoles|jueves|viernes|sábado|domingo)/i,
+      /(mañana|pasado mañana)/i,
+      /el\s+(\d{1,2})/i,
+      /(\d{1,2})\s*\/\s*(\d{1,2})/i
+    ];
+
+    for (const pattern of datePatterns) {
+      const match = text.match(pattern);
+      if (match) {
+        // Convertir "mañana" y "pasado mañana" a fechas concretas
+        if (match[0].toLowerCase().includes('mañana')) {
+          const tomorrow = new Date();
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          return this.formatDate(tomorrow);
+        }
+        return match[0];
+      }
+    }
+
+    return 'fecha no especificada';
+  }
+
+  private formatDate(date: Date): string {
+    const day = date.getDate();
+    const month = date.toLocaleDateString('es-ES', { month: 'long' });
+    return `${day} de ${month}`;
+  }
+
+  // Mejor extracción de fecha del contexto
+  private extractDateFromContext(userTranscript: string, llmResponse: string): string {
+    // Primero intentar extraer de la respuesta del LLM
+    const llmDate = this.extractDate(llmResponse);
+    if (llmDate !== 'fecha no especificada') {
+      return llmDate;
+    }
+
+    // Buscar en el historial de la conversación
+    const userDate = this.extractDate(userTranscript);
+    if (userDate !== 'fecha no especificada') {
+      return userDate;
+    }
+
+    // Si no encuentra fecha, usar la fecha actual + 3 días hábiles
+    const futureDate = new Date();
+    let businessDays = 0;
+    while (businessDays < 3) {
+      futureDate.setDate(futureDate.getDate() + 1);
+      if (futureDate.getDay() !== 0 && futureDate.getDay() !== 6) {
+        businessDays++;
+      }
+    }
+    
+    return this.formatDate(futureDate);
   }
 
   private handleMediaEvent(data: any, client: WebSocket, streamSid: string, callSid: string) {
@@ -321,33 +485,13 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return hasFinalKeyword && hasDate;
   }
 
-  private isUserConfirmation(userTranscript: string): boolean {
-    const confirmationWords = ['sí', 'si', 'claro', 'ok', 'de acuerdo', 'confirmo'];
-    return confirmationWords.some(word => userTranscript.toLowerCase().includes(word));
-  }
-
-  private extractDate(text: string): string {
-    const datePattern = /(lunes|martes|miércoles|jueves|viernes|sábado|domingo)|(\d{1,2}\s+de\s+[a-z]+)/i;
-    const match = text.match(datePattern);
-    return match ? match[0] : 'fecha no especificada';
-  }
-
-  private extractDateFromContext(userTranscript: string, llmResponse: string): string {
-    const llmDate = this.extractDate(llmResponse);
-    if (llmDate !== 'fecha no especificada') return llmDate;
-    
-    const datePattern = /(lunes|martes|miércoles|jueves|viernes|sábado|domingo)|(\d{1,2}\s+de\s+[a-z]+)/i;
-    const match = userTranscript.match(datePattern);
-    return match ? match[0] : 'próximo día hábil';
-  }
-
   private async endCall(client: WebSocket, streamSid: string, callSid: string, agreedDate: string) {
     this.logger.log(`📞 Terminando llamada. Fecha: ${agreedDate}`);
     this.clearSilenceTimeout();
 
     try {
       client.send(JSON.stringify({ event: 'stop', streamSid }));
-      
+
       if (callSid) {
         await this.twilio.hangupCall(callSid);
         this.logger.log('🛑 Llamada finalizada');
