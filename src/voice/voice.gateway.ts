@@ -103,7 +103,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 `🔄 Interacción número: ${this.interactionCount}`,
               );
 
-              if (this.interactionCount >= 5) {
+              if (this.interactionCount >= 7) {
                 this.logger.log(
                   '⏰ Límite de interacciones alcanzado, cerrando llamada',
                 );
@@ -114,7 +114,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
               if (this.paymentDateAgreed) {
                 this.logger.log('✅ Fecha ya acordada, terminando llamada...');
-                await this.endCall(client, streamSid, callSid, this.agreedDate);
+                setTimeout(async () => {
+                  await this.endCall(
+                    client,
+                    streamSid,
+                    callSid,
+                    this.agreedDate,
+                  );
+                }, 4000);
                 isProcessing = false;
                 return;
               }
@@ -131,9 +138,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
                   // Enviar confirmación final y terminar
                   await this.sendAudioResponse(client, streamSid, reply);
-                  setTimeout(() => {
-                    this.endCall(client, streamSid, callSid, this.agreedDate);
-                  }, 1500);
+                  setTimeout(async () => {
+                    await this.endCall(
+                      client,
+                      streamSid,
+                      callSid,
+                      this.agreedDate,
+                    );
+                  }, 4000);
                   isProcessing = false;
                   return;
                 }
@@ -159,9 +171,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                       streamSid,
                       finalMessage,
                     );
-                    setTimeout(() => {
-                      this.endCall(client, streamSid, callSid, this.agreedDate);
-                    }, 1500);
+                    setTimeout(async () => {
+                      await this.endCall(
+                        client,
+                        streamSid,
+                        callSid,
+                        this.agreedDate,
+                      );
+                    }, 4000);
                     isProcessing = false;
                     return;
                   }
