@@ -157,7 +157,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
                     `🔄 Confirmaciones consecutivas: ${this.consecutiveConfirmations}`,
                   );
 
-                  if (this.consecutiveConfirmations >= 2) {
+                  if (this.consecutiveConfirmations >= 1) {
                     this.paymentDateAgreed = true;
                     this.agreedDate = this.extractDateFromContext(
                       transcript,
@@ -386,7 +386,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.hasGreeted = true;
 
     // Personalizar saludo con el nombre del cliente
-    const name = customerName || 'Jhan';
+    const name = customerName || 'Guillermo';
     const greeting = `Hola, ${name} me comunico desde La Ofrenda, quería brindarte información sobre tu cuota pendiente y aclarar si tienes preguntas o dudas.`;
 
     this.logger.log(`🤖 Saludo inicial: ${greeting}`);
