@@ -325,7 +325,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.hasGreeted = true;
 
     const name = customerName || 'cliente';
-    const greeting = `Hola ${name} me comunico desde La Ofrenda, quería brindarte información sobre tu cuota pendiente.`;
+    const greeting = `Hola me comunico desde La Ofrenda quería brindarte información sobre tu cuota pendiente`;
 
     this.logger.log(`🤖 Saludo: ${greeting}`);
     await this.sendAudioResponse(client, streamSid, greeting);
