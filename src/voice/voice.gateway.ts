@@ -1,4 +1,3 @@
-// IMPORTS iguales a los tuyos
 import {
   OnGatewayConnection,
   OnGatewayDisconnect,
@@ -26,25 +25,16 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
-  // Estado de llamada
-  private paymentDateAgreed = false;
-  private agreedDate = '';
-  private interactionCount = 0;
-  private consecutiveConfirmations = 0;
-  private hasGreeted = false;
-  private isAgentSpeaking = false;
+  private paymentDateAgreed: boolean = false;
+  private agreedDate: string = '';
+  private interactionCount: number = 0;
+  private consecutiveConfirmations: number = 0;
+  private hasGreeted: boolean = false;
+  private isAgentSpeaking: boolean = false;
   private timeoutTimer: NodeJS.Timeout | null = null;
   private readonly SILENCE_TIMEOUT_MS = 15000;
-  private interruptionCount = 0;
-  private lastInteractionTime = Date.now();
-
-  // Nueva: cola simple FIFO para transcripciones
-  private transcriptQueue: string[] = [];
-  private processingQueue = false;
-
-  // Nueva: referencia a la promesa TTS actual para poder esperar/cancelar
-  private currentTtsPromise: Promise<void> | null = null;
-  private cancelCurrentTts = false;
+  private interruptionCount: number = 0;
+  private lastInteractionTime: number = Date.now();
 
   handleConnection(client: WebSocket, req: any) {
     this.logger.log('🔌 Twilio conectado');
@@ -54,10 +44,12 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const debtAmount = url.searchParams.get('debtAmount');
 
     this.logger.log(`📋 Cliente: ${customerName}, Deuda: ${debtAmount}`);
+
     this.llm.setClientData(customerName, debtAmount);
 
     let streamSid: string | null = null;
     let callSid: string | null = null;
+    let isProcessing = false;
 
     this.resetCallState();
 
@@ -86,24 +78,82 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               }
             }, 1000);
 
-            // Conectar transcripción - asumimos que deepgram.connect ejecuta callback por cada transcript
-            this.deepgram.connect((transcript: string) => {
-              // cada transcript va a la cola
-              if (!transcript || transcript.trim().length < 1) return;
-              this.transcriptQueue.push(transcript);
-              this.resetSilenceTimeout(client, streamSid, callSid);
-
-              // si el usuario habla mientras el agente está hablando cancelamos TTS inmediatamente
-              if (this.isAgentSpeaking) {
-                this.logger.log('🗣️ Interrupción detectada - cancelando TTS activo');
-                this.cancelCurrentTts = true;
-                // cuenta interrupciones (si quieres lógica más compleja)
-                this.interruptionCount++;
+            this.deepgram.connect(async (transcript) => {
+              if (isProcessing) {
+                return;
               }
 
-              // procesar cola (si no está procesando)
-              if (!this.processingQueue) {
-                this.processTranscriptQueue(client, streamSid, callSid);
+              this.resetSilenceTimeout(client, streamSid, callSid);
+
+              if (this.isAgentSpeaking && transcript.trim().length > 3) {
+                this.logger.log(`🗣️ Usuario interrumpió: ${transcript}`);
+                this.interruptionCount++;
+                
+                if (this.interruptionCount >= 2) {
+                  this.isAgentSpeaking = false;
+                }
+              }
+
+              isProcessing = true;
+              this.logger.log(`📝 Transcripción: ${transcript}`);
+
+              if (transcript.trim().length < 3) {
+                isProcessing = false;
+                return;
+              }
+
+              this.interactionCount++;
+              this.logger.log(`🔄 Interacción: ${this.interactionCount}`);
+
+              if (this.interactionCount >= 10) {
+                this.logger.log('⏰ Límite de interacciones');
+                await this.forceCallEnd(client, streamSid, callSid);
+                isProcessing = false;
+                return;
+              }
+
+              if (this.paymentDateAgreed) {
+                setTimeout(async () => {
+                  await this.endCall(client, streamSid, callSid, this.agreedDate);
+                }, 2000);
+                isProcessing = false;
+                return;
+              }
+
+              try {
+                const reply = await this.llm.ask(transcript);
+                this.logger.log(`🤖 Agente: ${reply}`);
+
+                if (this.isFinalConfirmation(reply)) {
+                  this.paymentDateAgreed = true;
+                  this.agreedDate = this.extractDate(reply);
+                  await this.sendAudioResponse(client, streamSid, reply);
+                  setTimeout(() => this.endCall(client, streamSid, callSid, this.agreedDate), 2000);
+                  isProcessing = false;
+                  return;
+                }
+
+                if (this.isUserConfirmation(transcript) && this.consecutiveConfirmations >= 1) {
+                  this.paymentDateAgreed = true;
+                  this.agreedDate = this.extractDate(reply) || 'próximo día hábil';
+                  const finalMessage = `Perfecto confirmo su pago para el ${this.agreedDate} gracias por su compromiso`;
+                  await this.sendAudioResponse(client, streamSid, finalMessage);
+                  setTimeout(() => this.endCall(client, streamSid, callSid, this.agreedDate), 3000);
+                  isProcessing = false;
+                  return;
+                }
+
+                if (this.isUserConfirmation(transcript)) {
+                  this.consecutiveConfirmations++;
+                } else {
+                  this.consecutiveConfirmations = 0;
+                }
+
+                await this.sendAudioResponse(client, streamSid, reply);
+              } catch (err) {
+                this.logger.error('❌ Error en LLM/TTS', err);
+              } finally {
+                isProcessing = false;
               }
             });
             break;
@@ -140,8 +190,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.log('❌ Twilio desconectado');
       this.deepgram.stop();
       this.clearSilenceTimeout();
-      // cancelar TTS si hay
-      this.cancelCurrentTts = true;
     });
   }
 
@@ -152,159 +200,62 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.terminate();
   }
 
-  // --- Cola de transcripciones ---
-  private async processTranscriptQueue(client: WebSocket, streamSid: string, callSid: string) {
-    this.processingQueue = true;
-    while (this.transcriptQueue.length > 0) {
-      const transcript = this.transcriptQueue.shift();
-      if (!transcript) continue;
-
-      this.interactionCount++;
-      this.logger.log(`🔄 Interacción: ${this.interactionCount} -> ${transcript}`);
-
-      if (this.interactionCount >= 10) {
-        this.logger.log('⏰ Límite de interacciones');
-        await this.forceCallEnd(client, streamSid, callSid);
-        break;
-      }
-
-      if (this.paymentDateAgreed) {
-        await this.endCall(client, streamSid, callSid, this.agreedDate);
-        break;
-      }
-
-      try {
-        // Llamada LLM
-        const reply = await this.llm.ask(transcript);
-        this.logger.log(`🤖 Agente: ${reply}`);
-
-        // Lógica de confirmaciones (igual que la tuya)
-        if (this.isFinalConfirmation(reply)) {
-          this.paymentDateAgreed = true;
-          this.agreedDate = this.extractDate(reply);
-          await this.sendAudioResponse(client, streamSid, reply);
-          await this.waitForTtsToFinishOrTimeout(8000); // espera segura
-          await this.endCall(client, streamSid, callSid, this.agreedDate);
-          break;
-        }
-
-        if (this.isUserConfirmation(transcript) && this.consecutiveConfirmations >= 1) {
-          this.paymentDateAgreed = true;
-          this.agreedDate = this.extractDate(reply) || 'próximo día hábil';
-          const finalMessage = `Perfecto confirmo su pago para el ${this.agreedDate} gracias por su compromiso`;
-          await this.sendAudioResponse(client, streamSid, finalMessage);
-          await this.waitForTtsToFinishOrTimeout(8000);
-          await this.endCall(client, streamSid, callSid, this.agreedDate);
-          break;
-        }
-
-        if (this.isUserConfirmation(transcript)) {
-          this.consecutiveConfirmations++;
-        } else {
-          this.consecutiveConfirmations = 0;
-        }
-
-        await this.sendAudioResponse(client, streamSid, reply);
-      } catch (err) {
-        this.logger.error('❌ Error en LLM/TTS', err);
-      }
-    }
-    this.processingQueue = false;
-  }
-
-  // --- Envío de audio con control de cancelación y backpressure ---
   private async sendAudioResponse(client: WebSocket, streamSid: string, text: string): Promise<void> {
-    // si el socket no está abierto, salir
-    if (!client || (client.readyState !== WebSocket.OPEN)) {
-      this.logger.warn('Socket no abierto, no se puede enviar TTS');
-      return;
-    }
+    try {
+      this.isAgentSpeaking = true;
+      const mulawBuffer = await this.tts.synthesizeToMuLaw8k(text);
+      const chunkSize = 160;
 
-    this.cancelCurrentTts = false;
-    this.isAgentSpeaking = true;
-
-    // Guardamos la promesa para que otros métodos puedan esperarla
-    const promise = (async () => {
-      try {
-        const mulawBuffer = await this.tts.synthesizeToMuLaw8k(text); // Buffer
-        const chunkSize = 160; // mantén tu chunk size
-
-        for (let i = 0; i < mulawBuffer.length; i += chunkSize) {
-          if (this.cancelCurrentTts) {
-            this.logger.log('TTS cancelado por nueva entrada');
-            break;
-          }
-
-          const chunk = mulawBuffer.subarray(i, i + chunkSize);
-          // comprobar estado del socket
-          if (client.readyState !== WebSocket.OPEN) {
-            this.logger.warn('Socket cerrado mientras enviaba audio');
-            break;
-          }
-
-          // enviar chunk
-          client.send(
-            JSON.stringify({
-              event: 'media',
-              streamSid,
-              media: {
-                payload: chunk.toString('base64'),
-                track: 'inbound',
-              },
-            }),
-          );
-
-          // CONTROL DE BACKPRESSURE: si hay bufferedAmount alta, esperamos
-          // bufferedAmount es número de bytes sin enviar aún
-          if ((client as any).bufferedAmount && (client as any).bufferedAmount > 64 * 1024) {
-            // si hay mucho buffer, espera un poquito
-            await new Promise(resolve => setTimeout(resolve, 20));
-          } else {
-            // pequeña espera para evitar "burst" extremo y dar tiempo a Twilio
-            await new Promise(resolve => setTimeout(resolve, 6));
-          }
+      for (let i = 0; i < mulawBuffer.length; i += chunkSize) {
+        if (!this.isAgentSpeaking) {
+          break;
         }
-      } catch (error) {
-        this.logger.error('Error enviando audio:', error);
-      } finally {
-        this.isAgentSpeaking = false;
-      }
-    })();
 
-    this.currentTtsPromise = promise;
-    await promise;
-    this.currentTtsPromise = null;
-  }
+        const chunk = mulawBuffer.subarray(i, i + chunkSize);
+        client.send(
+          JSON.stringify({
+            event: 'media',
+            streamSid,
+            media: {
+              payload: chunk.toString('base64'),
+              track: 'inbound',
+            },
+          }),
+        );
 
-  private async waitForTtsToFinishOrTimeout(timeoutMs = 5000) {
-    const start = Date.now();
-    while (this.isAgentSpeaking) {
-      if (Date.now() - start > timeoutMs) {
-        this.logger.warn('Timeout esperando a que TTS termine');
-        break;
+        if (i % (chunkSize * 5) === 0) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
       }
-      await new Promise(resolve => setTimeout(resolve, 50));
+    } catch (error) {
+      this.logger.error('Error enviando audio:', error);
+    } finally {
+      this.isAgentSpeaking = false;
     }
   }
 
   private isFinalConfirmation(llmResponse: string): boolean {
     const finalKeywords = [
-      'confirmo', 'acordado', 'perfecto', 'excelente', 'gracias',
+      'confirmo', 'acordado', 'perfecto', 'excelente', 'gracias', 
       'queda confirmado', 'muchas gracias', 'finalizado', 'terminamos'
     ];
-    const hasFinalKeyword = finalKeywords.some(keyword =>
+    
+    const hasFinalKeyword = finalKeywords.some(keyword => 
       llmResponse.toLowerCase().includes(keyword)
     );
+    
     const hasDate = this.extractDate(llmResponse) !== 'fecha no especificada';
+    
     return hasFinalKeyword && hasDate;
   }
 
   private isUserConfirmation(userTranscript: string): boolean {
     const confirmationWords = [
-      'sí', 'si', 'claro', 'por supuesto', 'ok', 'de acuerdo',
+      'sí', 'si', 'claro', 'por supuesto', 'ok', 'de acuerdo', 
       'confirmo', 'acepto', 'está bien', 'perfecto'
     ];
-    return confirmationWords.some(word =>
+
+    return confirmationWords.some(word => 
       userTranscript.toLowerCase().includes(word)
     );
   }
@@ -332,14 +283,13 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private async handleSilenceTimeout(client: WebSocket, streamSid: string, callSid: string): Promise<void> {
     this.logger.warn('⏰ Timeout por silencio');
-
+    
     if (this.paymentDateAgreed) {
       await this.endCall(client, streamSid, callSid, this.agreedDate);
     } else {
       const timeoutMessage = 'No hemos podido establecer comunicación. Nos contactaremos nuevamente. Que tenga buen día.';
       await this.sendAudioResponse(client, streamSid, timeoutMessage);
-      await this.waitForTtsToFinishOrTimeout(7000);
-      await this.endCall(client, streamSid, callSid, 'fecha no confirmada');
+      setTimeout(() => this.endCall(client, streamSid, callSid, 'fecha no confirmada'), 2000);
     }
   }
 
@@ -352,9 +302,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.isAgentSpeaking = false;
     this.interruptionCount = 0;
     this.lastInteractionTime = Date.now();
-    this.transcriptQueue = [];
-    this.processingQueue = false;
-    this.cancelCurrentTts = false;
   }
 
   private async endCall(client: WebSocket, streamSid: string, callSid: string, agreedDate: string) {
@@ -362,22 +309,14 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.clearSilenceTimeout();
 
     try {
-      // enviar evento stop al stream (Twilio)
       client.send(JSON.stringify({ event: 'stop', streamSid }));
-
-      // esperar a que termine TTS activo (o forzarlo después de timeout)
-      await this.waitForTtsToFinishOrTimeout(5000);
-
+      
       if (callSid) {
         await this.twilio.hangupCall(callSid);
         this.logger.log('🛑 Llamada finalizada');
       }
     } catch (err) {
       this.logger.error('❌ Error terminando llamada', err);
-    } finally {
-      // asegurar estado limpio
-      this.cancelCurrentTts = true;
-      this.isAgentSpeaking = false;
     }
   }
 
@@ -395,7 +334,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private async forceCallEnd(client: WebSocket, streamSid: string, callSid: string) {
     const finalMessage = 'Gracias por su tiempo. Nos comunicaremos nuevamente. Que tenga buen día.';
     await this.sendAudioResponse(client, streamSid, finalMessage);
-    await this.waitForTtsToFinishOrTimeout(4000);
-    await this.endCall(client, streamSid, callSid, 'fecha no confirmada');
+    setTimeout(() => this.endCall(client, streamSid, callSid, 'fecha no confirmada'), 1000);
   }
 }
