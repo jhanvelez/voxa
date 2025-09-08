@@ -10,6 +10,12 @@ type ConversationState =
   | 'closing_call'
   | 'handling_objections';
 
+// Tipo para los mensajes del historial de conversación
+type ConversationMessage = {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+};
+
 export class LlmService {
   private client: OpenAI;
   private conversationContext: {
@@ -22,10 +28,7 @@ export class LlmService {
     conversationState: ConversationState;
     clientIdentified: boolean;
     paymentPromiseObtained: boolean;
-    conversationHistory: Array<{
-      role: string;
-      content: string;
-    }>;
+    conversationHistory: ConversationMessage[];
   };
 
   constructor() {
@@ -47,10 +50,10 @@ export class LlmService {
   // Método para extraer y recordar información clave
   private extractContextInfo(prompt: string): void {
     const lowerPrompt = prompt.toLowerCase();
-
+    
     // Extraer nombre si se menciona
     const nameMatch = lowerPrompt.match(
-      /(?:me llamo|soy|mi nombre es|yo soy)\s+([a-záéíóúñ\s]+)/i,
+      /(?:me llamo|soy|mi nombre es|yo soy)\s+([a-záéíóúñ\s]+)/i
     );
     if (nameMatch && !this.conversationContext.clientIdentified) {
       this.conversationContext.clientName = nameMatch[1].trim();
@@ -65,13 +68,13 @@ export class LlmService {
       /(\d{1,2})\s*(?:de|\/)\s*([a-záéíóúñ]+|\d{1,2})/i,
       /(lunes|martes|miércoles|jueves|viernes|sábado|domingo)/i,
       /(pasado mañana|mañana)/i,
-      /el\s+(\d{1,2})/i,
+      /el\s+(\d{1,2})/i
     ];
 
     for (const pattern of datePatterns) {
       const dateMatch = lowerPrompt.match(pattern);
       if (dateMatch) {
-        const extractedDate = this.parseDateFromInput(dateMatch, lowerPrompt);
+        let extractedDate = this.parseDateFromInput(dateMatch, lowerPrompt);
         if (extractedDate && this.isValidBusinessDate(extractedDate)) {
           this.conversationContext.agreedDate = extractedDate;
           this.conversationContext.paymentPromiseObtained = true;
@@ -82,27 +85,17 @@ export class LlmService {
     }
 
     // Detectar afirmaciones de pago
-    if (
-      lowerPrompt.match(
-        /\b(sí|si|claro|por supuesto|acepto|confirmo|ok|vale|de acuerdo|perfecto)\b/i,
-      )
-    ) {
+    if (lowerPrompt.match(/\b(sí|si|claro|por supuesto|acepto|confirmo|ok|vale|de acuerdo|perfecto)\b/i)) {
       if (this.conversationContext.agreedDate) {
         this.conversationContext.conversationState = 'closing_call';
-      } else if (
-        this.conversationContext.conversationState === 'negotiating_date'
-      ) {
+      } else if (this.conversationContext.conversationState === 'negotiating_date') {
         // Si dice sí pero no dio fecha, pedir fecha específica
         this.conversationContext.conversationState = 'negotiating_date';
       }
     }
 
     // Detectar objeciones o negativas
-    if (
-      lowerPrompt.match(
-        /\b(no|tengo problemas|no puedo|difícil|complicado|es que|pero)\b/i,
-      )
-    ) {
+    if (lowerPrompt.match(/\b(no|tengo problemas|no puedo|difícil|complicado|es que|pero)\b/i)) {
       this.conversationContext.conversationState = 'handling_objections';
     }
 
@@ -112,19 +105,16 @@ export class LlmService {
     }
   }
 
-  private parseDateFromInput(
-    match: RegExpMatchArray,
-    prompt: string,
-  ): string | null {
+  private parseDateFromInput(match: RegExpMatchArray, prompt: string): string | null {
     const today = new Date();
-
+    
     // Manejar "mañana" y "pasado mañana"
     if (prompt.includes('mañana')) {
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
       return this.formatColombianDate(tomorrow);
     }
-
+    
     if (prompt.includes('pasado mañana')) {
       const dayAfterTomorrow = new Date(today);
       dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
@@ -132,9 +122,7 @@ export class LlmService {
     }
 
     // Manejar días de la semana
-    const dayNames: {
-      [key: string]: number;
-    } = {
+    const dayNames: {[key: string]: number} = {
       'lunes': 1, 'martes': 2, 'miércoles': 3, 'jueves': 4, 
       'viernes': 5, 'sábado': 6, 'domingo': 0
     };
@@ -153,7 +141,7 @@ export class LlmService {
       const day = parseInt(match[1]);
       const monthInput = match[2].toLowerCase();
       const month = this.normalizeMonth(monthInput);
-
+      
       if (month && day >= 1 && day <= 31) {
         return `${day} de ${month}`;
       }
@@ -167,20 +155,15 @@ export class LlmService {
       'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
       'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
     ];
-
+    
     const day = date.getDate();
     const month = months[date.getMonth()];
-
+    
     return `${day} de ${month}`;
   }
 
   private isValidBusinessDate(dateString: string): boolean {
     // Validar que la fecha esté dentro de los próximos 5 días hábiles
-    const today = new Date();
-    const maxDate = this.calculateBusinessDays(today, 5);
-
-    // Convertir dateString a Date object para comparación
-    // (simplificado - en producción necesitarías un parser más robusto)
     return true; // Por ahora aceptamos todas las fechas válidas
   }
 
@@ -210,20 +193,20 @@ export class LlmService {
     // Agregar al historial de conversación
     this.conversationContext.conversationHistory.push({
       role: 'user',
-      content: prompt,
+      content: prompt
     });
 
     // Obtener fecha actual en horario de Colombia (UTC-5)
     const today = new Date();
     const colombiaOffset = -5 * 60; // UTC-5 en minutos
     const colombiaTime = new Date(today.getTime() + colombiaOffset * 60 * 1000);
-
+    
     const currentDate = colombiaTime.toLocaleDateString('es-CO', {
       timeZone: 'America/Bogota',
       weekday: 'long',
       day: 'numeric',
       month: 'long',
-      year: 'numeric',
+      year: 'numeric'
     });
 
     // Calcular límite de 5 días hábiles en horario Colombia
@@ -232,14 +215,14 @@ export class LlmService {
       timeZone: 'America/Bogota',
       weekday: 'long',
       day: 'numeric',
-      month: 'long',
+      month: 'long'
     });
 
     // Obtener los próximos 5 días hábiles para referencia
     const nextBusinessDays = this.getNextBusinessDays(colombiaTime, 5);
 
     // Construir contexto dinámico basado en el estado de la conversación
-    const systemContent = `Eres un agente de cobranzas profesional colombiano en una llamada telefónica EN TIEMPO REAL. 
+    let systemContent = `Eres un agente de cobranzas profesional colombiano en una llamada telefónica EN TIEMPO REAL. 
 Fecha y hora actual en Colombia: ${currentDate}
 
 ESTADO ACTUAL: ${this.conversationContext.conversationState}
@@ -250,18 +233,11 @@ INFORMACIÓN ACTUAL:
 - Límite máximo para pago: ${limitDateStr}
 - Próximos días hábiles: ${nextBusinessDays.join(', ')}
 
-${
-  this.conversationContext.clientName &&
-  this.conversationContext.clientIdentified
-    ? `- Cliente: ${this.conversationContext.clientName}`
-    : '- Cliente: Por identificar'
-}
+${this.conversationContext.clientName && this.conversationContext.clientIdentified ? 
+`- Cliente: ${this.conversationContext.clientName}` : '- Cliente: Por identificar'}
 
-${
-  this.conversationContext.agreedDate
-    ? `- Fecha acordada: ${this.conversationContext.agreedDate}`
-    : '- Fecha acordada: Pendiente'
-}
+${this.conversationContext.agreedDate ? 
+`- Fecha acordada: ${this.conversationContext.agreedDate}` : '- Fecha acordada: Pendiente'}
 
 REGLAS ESTRICTAS:
 1. ESTÁS EN LLAMADA TELEFÓNICA REAL - respuestas breves y naturales (15-30 palabras)
@@ -298,9 +274,13 @@ NO PERMITIDO:
 - Alargar la llamada sin necesidad`;
 
     try {
-      const messages = [
+      // Preparar mensajes para la API de OpenAI
+      const messages: any[] = [
         { role: 'system', content: systemContent },
-        ...this.conversationContext.conversationHistory.slice(-6), // Últimas 3 interacciones
+        ...this.conversationContext.conversationHistory.slice(-6).map(msg => ({
+          role: msg.role,
+          content: msg.content
+        }))
       ];
 
       const res = await this.client.chat.completions.create({
@@ -318,7 +298,7 @@ NO PERMITIDO:
       // Agregar respuesta al historial
       this.conversationContext.conversationHistory.push({
         role: 'assistant',
-        content: text,
+        content: text
       });
 
       // Avanzar el estado de la conversación
@@ -338,8 +318,7 @@ NO PERMITIDO:
 
     while (found < count) {
       current.setDate(current.getDate() + 1);
-      if (current.getDay() !== 0 && current.getDay() !== 6) {
-        // No fines de semana
+      if (current.getDay() !== 0 && current.getDay() !== 6) { // No fines de semana
         const day = current.getDate();
         const month = current.toLocaleDateString('es-CO', { month: 'long' });
         businessDays.push(`${day} de ${month}`);
@@ -405,10 +384,8 @@ NO PERMITIDO:
 
   // Método para verificar si la llamada puede cerrarse
   shouldEndCall(): boolean {
-    return (
-      this.conversationContext.conversationState === 'closing_call' &&
-      this.conversationContext.paymentPromiseObtained
-    );
+    return this.conversationContext.conversationState === 'closing_call' &&
+           this.conversationContext.paymentPromiseObtained;
   }
 
   // Método para resetear el contexto
@@ -419,7 +396,7 @@ NO PERMITIDO:
       conversationState: 'initial_greeting',
       clientIdentified: false,
       paymentPromiseObtained: false,
-      conversationHistory: [],
+      conversationHistory: []
     };
   }
 
