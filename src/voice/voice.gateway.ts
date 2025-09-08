@@ -30,6 +30,15 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private interactionCount: number = 0;
   private consecutiveConfirmations: number = 0;
   private hasGreeted: boolean = false;
+  
+  // Nuevas variables para manejo de interrupciones y timeout
+  private isAgentSpeaking: boolean = false;
+  private currentAudioStream: any = null;
+  private timeoutTimer: NodeJS.Timeout | null = null;
+  private readonly SILENCE_TIMEOUT_MS = 15000; // 15 segundos de silencio
+  private readonly MAX_INTERRUPTIONS = 3;
+  private interruptionCount: number = 0;
+  private lastInteractionTime: number = Date.now();
 
   handleConnection(client: WebSocket, req: any) {
     this.logger.log('🔌 Twilio conectado');
@@ -49,11 +58,19 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     let streamSid: string | null = null;
     let callSid: string | null = null;
     let isProcessing = false;
-    this.paymentDateAgreed = false; // Resetear estado
+    
+    // Resetear estados
+    this.paymentDateAgreed = false;
     this.agreedDate = '';
     this.interactionCount = 0;
     this.consecutiveConfirmations = 0;
     this.hasGreeted = false;
+    this.isAgentSpeaking = false;
+    this.interruptionCount = 0;
+    this.lastInteractionTime = Date.now();
+
+    // Iniciar timeout de silencio
+    this.resetSilenceTimeout(client, streamSid, callSid);
 
     client.on('message', async (message: Buffer) => {
       let data: any;
@@ -77,6 +94,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               JSON.stringify(data.start, null, 2),
             );
 
+            // Reiniciar timeout
+            this.resetSilenceTimeout(client, streamSid, callSid);
+
             // ENVIAR SALUDO INMEDIATAMENTE
             setTimeout(async () => {
               if (!this.hasGreeted) {
@@ -88,6 +108,25 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               if (isProcessing) {
                 this.logger.warn('⚠️ Ya se está procesando una solicitud');
                 return;
+              }
+
+              // Reiniciar timeout con cada interacción
+              this.resetSilenceTimeout(client, streamSid, callSid);
+
+              // Si el agente está hablando y el usuario interrumpe
+              if (this.isAgentSpeaking && transcript.trim().length > 2) {
+                this.logger.log(`🗣️ Usuario interrumpió: ${transcript}`);
+                this.interruptionCount++;
+                
+                // Detener audio actual inmediatamente
+                this.stopCurrentAudio();
+                
+                // Manejar interrupción excesiva
+                if (this.interruptionCount >= this.MAX_INTERRUPTIONS) {
+                  this.logger.log('⚠️ Demasiadas interrupciones, terminando llamada');
+                  await this.forceCallEnd(client, streamSid, callSid);
+                  return;
+                }
               }
 
               isProcessing = true;
@@ -207,6 +246,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
               if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
                 this.deepgram.sendAudioChunk(mulawBuffer);
+                
+                // Reiniciar timeout con cada chunk de audio recibido
+                this.resetSilenceTimeout(client, streamSid, callSid);
               }
             } catch (err) {
               this.logger.error('❌ Error procesando audio', err);
@@ -217,6 +259,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             this.logger.log(`⏹️ Stream detenido (sid=${streamSid})`);
             this.deepgram.stop();
             isProcessing = false;
+            this.clearSilenceTimeout();
             break;
         }
       } catch (err) {
@@ -227,27 +270,44 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.on('close', () => {
       this.logger.log('❌ Twilio desconectado');
       this.deepgram.stop();
+      this.clearSilenceTimeout();
     });
   }
 
   handleDisconnect(client: WebSocket) {
     this.logger.log('Cliente desconectado');
     this.deepgram.stop();
+    this.clearSilenceTimeout();
     client.terminate();
   }
 
-  // Método para enviar respuesta de audio
+  // Método para enviar respuesta de audio con manejo de interrupciones
   private async sendAudioResponse(
     client: WebSocket,
     streamSid: string,
     text: string,
   ): Promise<void> {
     try {
+      this.isAgentSpeaking = true;
       const mulawBuffer = await this.tts.synthesizeToMuLaw8k(text);
       const chunkSize = 160;
 
-      // Enviar chunks más eficientemente
+      // Guardar referencia al stream actual
+      this.currentAudioStream = {
+        client,
+        streamSid,
+        buffer: mulawBuffer,
+        position: 0
+      };
+
+      // Enviar chunks más eficientemente con posibilidad de interrupción
       for (let i = 0; i < mulawBuffer.length; i += chunkSize) {
+        // Verificar si hubo interrupción
+        if (!this.isAgentSpeaking) {
+          this.logger.log('⏹️ Audio interrumpido por usuario');
+          break;
+        }
+
         const chunk = mulawBuffer.subarray(i, i + chunkSize);
 
         client.send(
@@ -260,13 +320,63 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
             },
           }),
         );
-        // Reducir el delay entre chunks
-        if (i % (chunkSize * 10) === 0) {
-          await new Promise((resolve) => setTimeout(resolve, 5));
+
+        // Pequeña pausa entre chunks para permitir interrupciones
+        if (i % (chunkSize * 5) === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
         }
       }
+
+      // Marcar que el agente terminó de hablar
+      this.isAgentSpeaking = false;
+      this.currentAudioStream = null;
+
     } catch (error) {
       this.logger.error('Error sending audio response:', error);
+      this.isAgentSpeaking = false;
+      this.currentAudioStream = null;
+    }
+  }
+
+  // Detener audio actual inmediatamente
+  private stopCurrentAudio(): void {
+    this.isAgentSpeaking = false;
+    this.currentAudioStream = null;
+  }
+
+  // Manejo de timeout por silencio
+  private resetSilenceTimeout(client: WebSocket, streamSid: string | null, callSid: string | null): void {
+    // Limpiar timeout anterior
+    this.clearSilenceTimeout();
+    
+    // Establecer nuevo timeout
+    this.timeoutTimer = setTimeout(async () => {
+      this.logger.warn('⏰ Timeout por silencio - Cerrando llamada');
+      await this.handleSilenceTimeout(client, streamSid, callSid);
+    }, this.SILENCE_TIMEOUT_MS);
+    
+    this.lastInteractionTime = Date.now();
+  }
+
+  private clearSilenceTimeout(): void {
+    if (this.timeoutTimer) {
+      clearTimeout(this.timeoutTimer);
+      this.timeoutTimer = null;
+    }
+  }
+
+  private async handleSilenceTimeout(client: WebSocket, streamSid: string | null, callSid: string | null): Promise<void> {
+    if (this.paymentDateAgreed) {
+      // Si ya se acordó fecha, simplemente terminar
+      await this.endCall(client, streamSid, callSid, this.agreedDate);
+    } else {
+      // Si no hay acuerdo, enviar mensaje de despedida
+      const timeoutMessage = 'No hemos podido establecer comunicación. Nos contactaremos nuevamente. Que tenga buen día.';
+      await this.sendAudioResponse(client, streamSid, timeoutMessage);
+      
+      setTimeout(async () => {
+        await this.endCall(client, streamSid, callSid, 'fecha no confirmada');
+      }, 3000);
     }
   }
 
@@ -352,6 +462,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(`📞 Terminando llamada. Fecha acordada: ${agreedDate}`);
 
     try {
+      // Limpiar timeout
+      this.clearSilenceTimeout();
+
       // Primero enviamos el stop al stream de WebSocket
       client.send(
         JSON.stringify({
