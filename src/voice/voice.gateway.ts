@@ -38,8 +38,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly SILENCE_TIMEOUT_MS = 15000; // 15 segundos
   private interruptionCount: number = 0;
   private lastInteractionTime: number = Date.now();
-  private audioQueue: any[] = [];
-  private isProcessingAudio: boolean = false;
 
   handleConnection(client: WebSocket, req: any) {
     this.logger.log('🔌 Twilio conectado');
@@ -90,12 +88,12 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
               }
             }, 500);
 
-            // Configurar Deepgram con procesamiento optimizado
-            this.setupDeepgram(client, streamSid, callSid, isProcessingUserInput);
+            // Configurar Deepgram
+            this.setupDeepgram(client, streamSid, callSid, () => isProcessingUserInput);
             break;
 
           case 'media':
-            this.handleMediaEvent(data, client, streamSid, callSid);
+            this.handleMediaEvent(data);
             break;
 
           case 'stop':
@@ -121,68 +119,38 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.terminate();
   }
 
-  // ========== MÉTODOS OPTIMIZADOS ==========
+  // ========== MÉTODOS PRINCIPALES ==========
 
-  private setupDeepgram(client: WebSocket, streamSid: string, callSid: string, isProcessingUserInput: boolean) {
+  private setupDeepgram(client: WebSocket, streamSid: string, callSid: string, isProcessingUserInput: () => boolean) {
     this.deepgram.connect(async (transcript) => {
-      // ... código existente ...
+      // Reiniciar timeout con cada interacción
+      this.resetSilenceTimeout(() => {
+        this.handleSilenceTimeout(client, streamSid, callSid);
+      });
 
-      // Nueva lógica: si el usuario confirma explícitamente, procesar inmediatamente
-      if (this.isExplicitUserConfirmation(transcript) && !this.paymentDateAgreed) {
-        this.logger.log('✅ Confirmación explícita detectada');
-        isProcessingUserInput = true;
-        await this.handleUserConfirmation(transcript, client, streamSid, callSid);
-        isProcessingUserInput = false;
+      // Ignorar transcripciones cortas durante speech del agente
+      if (this.isAgentSpeaking && transcript.trim().length < 5) {
         return;
       }
 
-      // ... resto del código existente ...
+      // Si el agente está hablando y usuario interrumpe significativamente
+      if (this.isAgentSpeaking && transcript.trim().length > 3) {
+        this.logger.log(`🗣️ Interrupción: ${transcript}`);
+        this.interruptionCount++;
+        
+        // Solo interrumpir después de múltiples interrupciones
+        if (this.interruptionCount >= 2) {
+          this.isAgentSpeaking = false;
+        }
+      }
+
+      if (isProcessingUserInput() || transcript.trim().length < 2) {
+        return;
+      }
+
+      await this.processUserInput(transcript, client, streamSid, callSid);
     });
   }
-
-  private isExplicitUserConfirmation(transcript: string): boolean {
-    const explicitConfirmations = [
-      'sí acepto', 'sí confirmo', 'claro que sí', 'por supuesto que sí',
-      'estoy de acuerdo', 'me parece bien', 'confirmo el pago', 'acepto la fecha'
-    ];
-
-    const lowerTranscript = transcript.toLowerCase();
-    return explicitConfirmations.some(confirmation => 
-      lowerTranscript.includes(confirmation)
-    );
-  }
-
-  private async handleUserConfirmation(transcript: string, client: WebSocket, streamSid: string, callSid: string) {
-    this.paymentDateAgreed = true;
-    
-    // Intentar extraer la fecha del contexto o usar una por defecto
-    this.agreedDate = this.extractDateFromContext(transcript, '');
-    if (this.agreedDate === 'fecha no especificada') {
-      this.agreedDate = this.getDefaultPaymentDate();
-    }
-
-    const finalMessage = `Perfecto, confirmo su pago para el ${this.agreedDate} del servicio La Ofrenda. Muchas gracias por su compromiso.`;
-    await this.sendAudioResponse(client, streamSid, finalMessage);
-    
-    setTimeout(() => this.endCall(client, streamSid, callSid, this.agreedDate), 3000);
-  }
-
-  private getDefaultPaymentDate(): string {
-    // 3 días hábiles a partir de hoy
-    const date = new Date();
-    let businessDays = 0;
-    
-    while (businessDays < 3) {
-      date.setDate(date.getDate() + 1);
-      if (date.getDay() !== 0 && date.getDay() !== 6) {
-        businessDays++;
-      }
-    }
-    
-    return this.formatDate(date);
-  }
-
-  // ========== MÉTODOS MEJORADOS PARA DETECCIÓN DE CONFIRMACIÓN ==========
 
   private async processUserInput(transcript: string, client: WebSocket, streamSid: string, callSid: string) {
     this.logger.log(`📝 Usuario: ${transcript}`);
@@ -232,7 +200,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  // Mejor detección de confirmación final del AGENTE
+  // ========== DETECCIÓN DE CONFIRMACIONES ==========
+
   private isAgentFinalConfirmation(llmResponse: string): boolean {
     const finalKeywords = [
       'confirmo', 'acordado', 'perfecto', 'excelente', 'gracias', 
@@ -253,7 +222,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return (hasFinalKeyword && hasDate) || (hasThankYou && hasGoodbye && hasDate);
   }
 
-  // Detección de confirmación del USUARIO
   private isUserConfirmingDate(userTranscript: string, agentResponse: string): boolean {
     // Verificar si el agente acaba de proponer una fecha
     const agentProposedDate = this.extractDate(agentResponse) !== 'fecha no especificada';
@@ -267,7 +235,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return agentProposedDate && agentAskingConfirmation && userConfirmation;
   }
 
-  // Mejor detección de confirmación del usuario
   private isUserConfirmation(userTranscript: string): boolean {
     const confirmationWords = [
       'sí', 'si', 'claro', 'por supuesto', 'ok', 'okey', 'de acuerdo', 
@@ -300,7 +267,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return hasConfirmationWord || hasConfirmationPattern;
   }
 
-  // Mejor extracción de fecha
+  // ========== MANEJO DE FECHAS ==========
+
   private extractDate(text: string): string {
     const datePatterns = [
       /(\d{1,2})\s+de\s+([a-záéíóúñ]+)/i,
@@ -332,7 +300,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return `${day} de ${month}`;
   }
 
-  // Mejor extracción de fecha del contexto
   private extractDateFromContext(userTranscript: string, llmResponse: string): string {
     // Primero intentar extraer de la respuesta del LLM
     const llmDate = this.extractDate(llmResponse);
@@ -359,26 +326,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return this.formatDate(futureDate);
   }
 
-  private handleMediaEvent(data: any, client: WebSocket, streamSid: string, callSid: string) {
-    if (!data.media?.payload) {
-      this.logger.warn('⚠️ Media sin payload');
-      return;
-    }
-
-    try {
-      const mulawBuffer = Buffer.from(data.media.payload, 'base64');
-      if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
-        this.deepgram.sendAudioChunk(mulawBuffer);
-        this.resetSilenceTimeout(() => {
-          this.handleSilenceTimeout(client, streamSid, callSid);
-        });
-      }
-    } catch (err) {
-      this.logger.error('❌ Error procesando audio', err);
-    }
-  }
-
-  // ========== MANEJO DE AUDIO OPTIMIZADO ==========
+  // ========== MANEJO DE AUDIO ==========
 
   private async sendAudioResponse(
     client: WebSocket,
@@ -389,8 +337,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.isAgentSpeaking = true;
       const mulawBuffer = await this.tts.synthesizeToMuLaw8k(text);
       
-      // Enviar audio en chunks grandes para mejor fluidez
-      const chunkSize = 320; // Chunks más grandes
+      // Enviar audio en chunks
+      const chunkSize = 320;
       const totalChunks = Math.ceil(mulawBuffer.length / chunkSize);
 
       for (let i = 0; i < totalChunks; i++) {
@@ -414,7 +362,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           }),
         );
 
-        // Pausa mínima entre chunks para no saturar
+        // Pequeña pausa para no saturar
         if (i % 10 === 0) {
           await new Promise(resolve => setTimeout(resolve, 5));
         }
@@ -424,6 +372,22 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.error('Error enviando audio:', error);
     } finally {
       this.isAgentSpeaking = false;
+    }
+  }
+
+  private handleMediaEvent(data: any) {
+    if (!data.media?.payload) {
+      this.logger.warn('⚠️ Media sin payload');
+      return;
+    }
+
+    try {
+      const mulawBuffer = Buffer.from(data.media.payload, 'base64');
+      if (mulawBuffer.length > 0 && this.deepgram.isConnected) {
+        this.deepgram.sendAudioChunk(mulawBuffer);
+      }
+    } catch (err) {
+      this.logger.error('❌ Error procesando audio', err);
     }
   }
 
@@ -465,24 +429,12 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.isAgentSpeaking = false;
     this.interruptionCount = 0;
     this.lastInteractionTime = Date.now();
-    this.audioQueue = [];
-    this.isProcessingAudio = false;
   }
 
   private cleanupConnection(): void {
     this.deepgram.stop();
     this.clearSilenceTimeout();
     this.isAgentSpeaking = false;
-    this.audioQueue = [];
-  }
-
-  private isFinalConfirmation(llmResponse: string): boolean {
-    const finalKeywords = ['confirmo', 'acordado', 'perfecto', 'gracias', 'queda confirmado'];
-    const hasFinalKeyword = finalKeywords.some(keyword => 
-      llmResponse.toLowerCase().includes(keyword)
-    );
-    const hasDate = this.extractDate(llmResponse) !== 'fecha no especificada';
-    return hasFinalKeyword && hasDate;
   }
 
   private async endCall(client: WebSocket, streamSid: string, callSid: string, agreedDate: string) {
