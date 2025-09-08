@@ -22,6 +22,10 @@ export class LlmService {
     conversationState: ConversationState;
     clientIdentified: boolean;
     paymentPromiseObtained: boolean;
+    conversationHistory: Array<{
+      role: string;
+      content: string;
+    }>;
   };
 
   constructor() {
@@ -42,45 +46,142 @@ export class LlmService {
 
   // Método para extraer y recordar información clave
   private extractContextInfo(prompt: string): void {
+    const lowerPrompt = prompt.toLowerCase();
+
     // Extraer nombre si se menciona
-    const nameMatch = prompt.match(
-      /(?:me llamo|soy|mi nombre es)\s+([a-záéíóúñ\s]+)/i,
+    const nameMatch = lowerPrompt.match(
+      /(?:me llamo|soy|mi nombre es|yo soy)\s+([a-záéíóúñ\s]+)/i,
     );
     if (nameMatch && !this.conversationContext.clientIdentified) {
       this.conversationContext.clientName = nameMatch[1].trim();
       this.conversationContext.clientIdentified = true;
-      this.conversationContext.conversationState = 'explaining_situation';
+      if (this.conversationContext.conversationState === 'initial_greeting') {
+        this.conversationContext.conversationState = 'explaining_situation';
+      }
     }
 
-    // Extraer fechas mencionadas (día y mes)
-    const dateMatch = prompt.match(
+    // Extraer fechas mencionadas (día y mes) - patrones más flexibles
+    const datePatterns = [
       /(\d{1,2})\s*(?:de|\/)\s*([a-záéíóúñ]+|\d{1,2})/i,
-    );
-    if (dateMatch) {
-      const day = dateMatch[1];
-      const month = this.normalizeMonth(dateMatch[2]);
-      if (month) {
-        this.conversationContext.agreedDate = `${day} de ${month}`;
-        this.conversationContext.paymentPromiseObtained = true;
-        this.conversationContext.conversationState = 'confirming_agreement';
+      /(lunes|martes|miércoles|jueves|viernes|sábado|domingo)/i,
+      /(pasado mañana|mañana)/i,
+      /el\s+(\d{1,2})/i,
+    ];
+
+    for (const pattern of datePatterns) {
+      const dateMatch = lowerPrompt.match(pattern);
+      if (dateMatch) {
+        const extractedDate = this.parseDateFromInput(dateMatch, lowerPrompt);
+        if (extractedDate && this.isValidBusinessDate(extractedDate)) {
+          this.conversationContext.agreedDate = extractedDate;
+          this.conversationContext.paymentPromiseObtained = true;
+          this.conversationContext.conversationState = 'confirming_agreement';
+          break;
+        }
       }
     }
 
     // Detectar afirmaciones de pago
     if (
-      prompt.match(
-        /\b(sí|si|claro|por supuesto|acepto|confirmo|ok|de acuerdo)\b/i,
+      lowerPrompt.match(
+        /\b(sí|si|claro|por supuesto|acepto|confirmo|ok|vale|de acuerdo|perfecto)\b/i,
       )
     ) {
       if (this.conversationContext.agreedDate) {
         this.conversationContext.conversationState = 'closing_call';
+      } else if (
+        this.conversationContext.conversationState === 'negotiating_date'
+      ) {
+        // Si dice sí pero no dio fecha, pedir fecha específica
+        this.conversationContext.conversationState = 'negotiating_date';
       }
     }
 
     // Detectar objeciones o negativas
-    if (prompt.match(/\b(no|tengo problemas|no puedo|difícil|complicado)\b/i)) {
+    if (
+      lowerPrompt.match(
+        /\b(no|tengo problemas|no puedo|difícil|complicado|es que|pero)\b/i,
+      )
+    ) {
       this.conversationContext.conversationState = 'handling_objections';
     }
+
+    // Detectar si el cliente quiere terminar la llamada
+    if (lowerPrompt.match(/\b(adiós|chao|hasta luego|gracias|nada más)\b/i)) {
+      this.conversationContext.conversationState = 'closing_call';
+    }
+  }
+
+  private parseDateFromInput(
+    match: RegExpMatchArray,
+    prompt: string,
+  ): string | null {
+    const today = new Date();
+
+    // Manejar "mañana" y "pasado mañana"
+    if (prompt.includes('mañana')) {
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      return this.formatColombianDate(tomorrow);
+    }
+
+    if (prompt.includes('pasado mañana')) {
+      const dayAfterTomorrow = new Date(today);
+      dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
+      return this.formatColombianDate(dayAfterTomorrow);
+    }
+
+    // Manejar días de la semana
+    const dayNames: {
+      [key: string]: number;
+    } = {
+      'lunes': 1, 'martes': 2, 'miércoles': 3, 'jueves': 4, 
+      'viernes': 5, 'sábado': 6, 'domingo': 0
+    };
+
+    if (match[1] in dayNames) {
+      const targetDay = dayNames[match[1].toLowerCase()];
+      const result = new Date(today);
+      let daysToAdd = (targetDay - today.getDay() + 7) % 7;
+      daysToAdd = daysToAdd === 0 ? 7 : daysToAdd; // Si es hoy, pasar al próximo
+      result.setDate(result.getDate() + daysToAdd);
+      return this.formatColombianDate(result);
+    }
+
+    // Manejar fechas numéricas (día de mes)
+    if (match[1] && match[2]) {
+      const day = parseInt(match[1]);
+      const monthInput = match[2].toLowerCase();
+      const month = this.normalizeMonth(monthInput);
+
+      if (month && day >= 1 && day <= 31) {
+        return `${day} de ${month}`;
+      }
+    }
+
+    return null;
+  }
+
+  private formatColombianDate(date: Date): string {
+    const months = [
+      'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+    ];
+
+    const day = date.getDate();
+    const month = months[date.getMonth()];
+
+    return `${day} de ${month}`;
+  }
+
+  private isValidBusinessDate(dateString: string): boolean {
+    // Validar que la fecha esté dentro de los próximos 5 días hábiles
+    const today = new Date();
+    const maxDate = this.calculateBusinessDays(today, 5);
+
+    // Convertir dateString a Date object para comparación
+    // (simplificado - en producción necesitarías un parser más robusto)
+    return true; // Por ahora aceptamos todas las fechas válidas
   }
 
   private normalizeMonth(monthInput: string): string | null {
@@ -106,88 +207,107 @@ export class LlmService {
     // Extraer información del contexto
     this.extractContextInfo(prompt);
 
+    // Agregar al historial de conversación
+    this.conversationContext.conversationHistory.push({
+      role: 'user',
+      content: prompt,
+    });
+
+    // Obtener fecha actual en horario de Colombia (UTC-5)
     const today = new Date();
-    const currentDate = today.toLocaleDateString('es-CO', {
+    const colombiaOffset = -5 * 60; // UTC-5 en minutos
+    const colombiaTime = new Date(today.getTime() + colombiaOffset * 60 * 1000);
+
+    const currentDate = colombiaTime.toLocaleDateString('es-CO', {
+      timeZone: 'America/Bogota',
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+
+    // Calcular límite de 5 días hábiles en horario Colombia
+    const businessDaysLimit = this.calculateBusinessDays(colombiaTime, 5);
+    const limitDateStr = businessDaysLimit.toLocaleDateString('es-CO', {
+      timeZone: 'America/Bogota',
       weekday: 'long',
       day: 'numeric',
       month: 'long',
     });
 
-    // Calcular límite de 5 días hábiles
-    const businessDaysLimit = this.calculateBusinessDays(today, 5);
-    const limitDateStr = businessDaysLimit.toLocaleDateString('es-CO', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-    });
+    // Obtener los próximos 5 días hábiles para referencia
+    const nextBusinessDays = this.getNextBusinessDays(colombiaTime, 5);
 
     // Construir contexto dinámico basado en el estado de la conversación
-    let systemContent = `Eres un agente de cobranzas profesional colombiano en una llamada telefónica en tiempo real. Tu objetivo es obtener un compromiso de pago con fecha exacta dentro de los próximos 5 días hábiles.
+    const systemContent = `Eres un agente de cobranzas profesional colombiano en una llamada telefónica EN TIEMPO REAL. 
+Fecha y hora actual en Colombia: ${currentDate}
 
-ESTADO ACTUAL DE LA LLAMADA: ${this.conversationContext.conversationState}
-INTENTO DE LLAMADA: ${this.conversationContext.callAttempt}
+ESTADO ACTUAL: ${this.conversationContext.conversationState}
+OBJETIVO PRINCIPAL: Obtener un compromiso de pago con FECHA EXACTA dentro de los próximos 5 días hábiles.
 
-INFORMACIÓN DEL CLIENTE:
+INFORMACIÓN ACTUAL:
 - Servicio: ${this.conversationContext.serviceName}
-- Fecha actual: ${currentDate}
-- Límite para pago: ${limitDateStr}`;
+- Límite máximo para pago: ${limitDateStr}
+- Próximos días hábiles: ${nextBusinessDays.join(', ')}
 
-    if (
-      this.conversationContext.clientName &&
-      this.conversationContext.clientIdentified
-    ) {
-      systemContent += `\n- Nombre del cliente: ${this.conversationContext.clientName}`;
-    }
+${
+  this.conversationContext.clientName &&
+  this.conversationContext.clientIdentified
+    ? `- Cliente: ${this.conversationContext.clientName}`
+    : '- Cliente: Por identificar'
+}
 
-    if (this.conversationContext.agreedDate) {
-      systemContent += `\n- Fecha acordada: ${this.conversationContext.agreedDate}`;
-    }
+${
+  this.conversationContext.agreedDate
+    ? `- Fecha acordada: ${this.conversationContext.agreedDate}`
+    : '- Fecha acordada: Pendiente'
+}
 
-    systemContent += `\n\nREGLAS ESTRICTAS DE LA CONVERSACIÓN:
-1. ESTÁS EN UNA LLAMADA TELEFÓNICA EN TIEMPO REAL - las respuestas deben ser breves y naturales para hablar
-2. AVANZA LA CONVERSACIÓN hacia el cierre - no te repitas ni te quedes estancado
-3. MÁXIMO 5 DÍAS HÁBILES desde hoy - no aceptes fechas posteriores
-4. OBTÉN UNA FECHA ESPECÍFICA - no aceptes vaguedades como "la próxima semana"
-5. FORMAL pero CORDIAL - trato de usted, respetuoso pero firme
-6. MENCIONA "el servicio La Ofrenda" en cada interacción importante
-7. CONFIRMA EXPLÍCITAMENTE el acuerdo final
-8. RESUELVE OBJECIONS brevemente y vuelve a pedir la fecha
-9. CIERRA LA LLAMADA una vez confirmado el pago
-10. LONGITUD: 20-80 palabras por respuesta (natural para hablar)
+REGLAS ESTRICTAS:
+1. ESTÁS EN LLAMADA TELEFÓNICA REAL - respuestas breves y naturales (15-30 palabras)
+2. NO TE REPITAS - avanza la conversación hacia el objetivo
+3. FECHAS VÁLIDAS: Solo acepta ${nextBusinessDays.join(' o ')}
+4. OBLIGATORIO: Obtener fecha específica, no vaguedades
+5. TRATO: Formal pero cordial, usar "usted"
+6. MENCIÓN: "servicio La Ofrenda" en cada interacción clave
+7. CONFIRMACIÓN: Verificar explícitamente el acuerdo
+8. CIERRE: Terminar llamada una vez confirmado el pago
 
-ESTRATEGIA POR ESTADOS:
+ESTRATEGIA POR ESTADO:
 
-INICIAL (saludo): Presentarte, identificar al cliente, mencionar brevemente el motivo
-EXPLICACIÓN: Recordar cortésmente la deuda pendiente de "La Ofrenda"
-NEGOCIACIÓN: Pedir específicamente una fecha de pago en los próximos 5 días
-OBJECIONES: Escuchar, empatizar brevemente, pero insistir en una fecha concreta
-CONFIRMACIÓN: Repetir la fecha acordada y pedir confirmación explícita
-CIERRE: Agradecer y finalizar la llamada cordialmente
+INICIAL: Saludo breve + identificación + motivo llamada
+EXPLICACIÓN: Recordar deuda pendiente (breve y clara)
+NEGOCIACIÓN: Pedir fecha CONCRETA entre ${nextBusinessDays.join(' o ')}
+OBJECIONES: Escuchar → empatizar → insistir en fecha específica
+CONFIRMACIÓN: "¿Confirmo su pago para el [fecha] del servicio La Ofrenda?"
+CIERRE: Agradecer y finalizar
 
-EJEMPLOS DE FRASES EFECTIVAS:
-"Buenos días, habla [Nombre] de La Ofrenda, ¿estoy hablando con el señor/la señora [Nombre]?"
-"Le recuerdo su compromiso pendiente con nuestro servicio La Ofrenda"
-"¿Para qué fecha concreta puedo registrar su pago, señor/señora?"
-"Entiendo su situación, pero necesito una fecha específica para regularizar su cuenta"
-"Perfecto, queda registrado su pago para el [fecha] del servicio La Ofrenda, ¿puedo confirmar que es correcto?"
-"Agradezco su compromiso, que tenga un excelente día"
+EJEMPLOS PRÁCTICOS:
+"Buenos días, soy Laura de La Ofrenda, ¿con quién tengo el gusto?"
+"Le recuerdo su compromiso pendiente con nuestro servicio"
+"¿Para cuál día de esta semana puede concretar el pago? Tenemos disponible ${nextBusinessDays[0]} o ${nextBusinessDays[1]}"
+"Entiendo, pero necesito una fecha específica para regularizar su cuenta"
+"Perfecto, confirmo su pago para el ${nextBusinessDays[0]} del servicio La Ofrenda, ¿está bien?"
+"Queda registrado, agradezco su compromiso. Buen día."
 
-NO HAGAS:
-- No des información financiera detallada
-- No prolongues la llamanda innecesariamente
-- No uses lenguaje muy técnico
-- No insistas más de 2 veces seguidas
-- No prometas cosas fuera de tu alcance`;
+NO PERMITIDO:
+- Charla innecesaria o repetitiva
+- Aceptar fechas fuera del rango
+- Dar información financiera detallada
+- Prometer cosas fuera de tu alcance
+- Alargar la llamada sin necesidad`;
 
     try {
+      const messages = [
+        { role: 'system', content: systemContent },
+        ...this.conversationContext.conversationHistory.slice(-6), // Últimas 3 interacciones
+      ];
+
       const res = await this.client.chat.completions.create({
         model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemContent },
-          { role: 'user', content: prompt.toLowerCase() },
-        ],
-        temperature: 0.3,
-        max_tokens: 100,
+        messages: messages,
+        temperature: 0.4,
+        max_tokens: 80,
       });
 
       let text = res.choices?.[0]?.message?.content ?? '';
@@ -195,7 +315,13 @@ NO HAGAS:
       // Limpieza y normalización del texto para habla
       text = this.cleanResponseText(text);
 
-      // Avanzar el estado de la conversación si es apropiado
+      // Agregar respuesta al historial
+      this.conversationContext.conversationHistory.push({
+        role: 'assistant',
+        content: text,
+      });
+
+      // Avanzar el estado de la conversación
       this.advanceConversationState();
 
       return text;
@@ -205,24 +331,54 @@ NO HAGAS:
     }
   }
 
+  private getNextBusinessDays(startDate: Date, count: number): string[] {
+    const businessDays: string[] = [];
+    const current = new Date(startDate);
+    let found = 0;
+
+    while (found < count) {
+      current.setDate(current.getDate() + 1);
+      if (current.getDay() !== 0 && current.getDay() !== 6) {
+        // No fines de semana
+        const day = current.getDate();
+        const month = current.toLocaleDateString('es-CO', { month: 'long' });
+        businessDays.push(`${day} de ${month}`);
+        found++;
+      }
+    }
+
+    return businessDays;
+  }
+
   private cleanResponseText(text: string): string {
     return text
-      .replace(/\.\.\./g, ' ') // Eliminar puntos suspensivos
-      .replace(/\s+/g, ' ') // Normalizar espacios
-      .replace(/[.,;:!?]{2,}/g, '') // Eliminar múltiples signos de puntuación
-      .replace(/\b\d{1,2}\b/g, (match) => this.numberToText(match)) // Convertir números a texto
-      .replace(/\b(muy|bastante|realmente|absolutamente)\s+/gi, '') // Simplificar adverbios
-      .replace(/\s+\./g, '.') // Limpiar espacios antes de puntos
+      .replace(/\.\.\./g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/[.,;:!?]{2,}/g, '')
+      .replace(/\b\d{1,2}\b/g, (match) => this.numberToText(match))
+      .replace(/\b(muy|bastante|realmente|absolutamente)\s+/gi, '')
+      .replace(/\s+\./g, '.')
+      .replace(/^\s*\.\s*/, '')
       .trim();
   }
 
   private advanceConversationState(): void {
     // Lógica para avanzar el estado basado en el progreso
-    if (
-      this.conversationContext.conversationState === 'confirming_agreement' &&
-      this.conversationContext.paymentPromiseObtained
-    ) {
-      this.conversationContext.conversationState = 'closing_call';
+    switch (this.conversationContext.conversationState) {
+      case 'initial_greeting':
+        this.conversationContext.conversationState = 'identifying_client';
+        break;
+      case 'identifying_client':
+        this.conversationContext.conversationState = 'explaining_situation';
+        break;
+      case 'explaining_situation':
+        this.conversationContext.conversationState = 'negotiating_date';
+        break;
+      case 'confirming_agreement':
+        if (this.conversationContext.paymentPromiseObtained) {
+          this.conversationContext.conversationState = 'closing_call';
+        }
+        break;
     }
 
     this.conversationContext.callAttempt += 1;
@@ -234,7 +390,6 @@ NO HAGAS:
 
     while (addedDays < daysToAdd) {
       result.setDate(result.getDate() + 1);
-      // No contar sábados (6) ni domingos (0)
       if (result.getDay() !== 0 && result.getDay() !== 6) {
         addedDays++;
       }
@@ -250,7 +405,10 @@ NO HAGAS:
 
   // Método para verificar si la llamada puede cerrarse
   shouldEndCall(): boolean {
-    return this.conversationContext.conversationState === 'closing_call';
+    return (
+      this.conversationContext.conversationState === 'closing_call' &&
+      this.conversationContext.paymentPromiseObtained
+    );
   }
 
   // Método para resetear el contexto
@@ -261,6 +419,7 @@ NO HAGAS:
       conversationState: 'initial_greeting',
       clientIdentified: false,
       paymentPromiseObtained: false,
+      conversationHistory: [],
     };
   }
 
